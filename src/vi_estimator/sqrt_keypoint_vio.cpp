@@ -911,6 +911,7 @@ void SqrtKeypointVioEstimator<Scalar_>::marginalize(const std::map<int64_t, int>
       PoseStateWithLin<Scalar> pose(state);
 
       frame_poses[id] = pose;
+      persistent_lmdb.addFramePose(id, pose);
       frame_states.erase(id);
       imu_meas.erase(id);
     }

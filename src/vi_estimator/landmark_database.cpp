@@ -120,6 +120,11 @@ void LandmarkDatabase<Scalar_>::addObservation(const TimeCamId &tcid_target, con
 }
 
 template <class Scalar_>
+void LandmarkDatabase<Scalar_>::addFramePose(int64_t frame_id, PoseStateWithLin<Scalar_> pos) {
+  frame_poses_[frame_id] = pos;
+}
+
+template <class Scalar_>
 Landmark<Scalar_> &LandmarkDatabase<Scalar_>::getLandmark(LandmarkId lm_id) {
   return kpts.at(lm_id);
 }

@@ -113,6 +113,8 @@ class LandmarkDatabase {
 
   void addObservation(const TimeCamId& tcid_target, const KeypointObservation<Scalar>& o);
 
+  void addFramePose(FrameId frame_id, PoseStateWithLin<Scalar> pos);
+
   Landmark<Scalar>& getLandmark(LandmarkId lm_id);
 
   // Const
@@ -159,6 +161,7 @@ class LandmarkDatabase {
 
   std::unordered_map<TimeCamId, std::map<TimeCamId, std::set<LandmarkId>>> observations;
 
+  Eigen::aligned_map<FrameId, PoseStateWithLin<Scalar>> frame_poses_;
 
   static constexpr int min_num_obs = 2;
 };
