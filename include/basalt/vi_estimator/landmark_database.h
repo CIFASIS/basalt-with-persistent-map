@@ -89,6 +89,20 @@ class LandmarkDatabase {
  public:
   using Scalar = Scalar_;
 
+  // TODO: unify
+  static LandmarkDatabase<Scalar>& getOriginalInstance() {
+      static LandmarkDatabase<Scalar> lmdb;
+      return lmdb;
+  }
+  static LandmarkDatabase<Scalar>& getMap() {
+      static LandmarkDatabase<Scalar> persistent_lmdb;
+      return persistent_lmdb;
+  }
+
+  // The copy constructor and copy assignment operator are deleted to prevent copying of the class.
+  LandmarkDatabase(const LandmarkDatabase&) = delete;
+  LandmarkDatabase& operator=(const LandmarkDatabase&) = delete;
+
   // Non-const
   void addLandmark(LandmarkId lm_id, const Landmark<Scalar>& pos);
 
@@ -133,6 +147,9 @@ class LandmarkDatabase {
   }
 
  private:
+  // The constructor is private to prevent external instantiation of the class.
+  LandmarkDatabase() {}
+
   using MapIter = typename Eigen::aligned_unordered_map<LandmarkId, Landmark<Scalar>>::iterator;
   MapIter removeLandmarkHelper(MapIter it);
   typename Landmark<Scalar>::MapIter removeLandmarkObservationHelper(MapIter it,
@@ -141,6 +158,7 @@ class LandmarkDatabase {
   Eigen::aligned_unordered_map<LandmarkId, Landmark<Scalar>> kpts;
 
   std::unordered_map<TimeCamId, std::map<TimeCamId, std::set<LandmarkId>>> observations;
+
 
   static constexpr int min_num_obs = 2;
 };

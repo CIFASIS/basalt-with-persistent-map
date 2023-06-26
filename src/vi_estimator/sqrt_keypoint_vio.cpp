@@ -339,6 +339,7 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
         kobs.pos = kv_obs.second.pose.translation().cast<Scalar>();
 
         lmdb.addObservation(tcid_target, kobs);
+        persistent_lmdb.addObservation(tcid_target, kobs);
         // obs[tcid_host][tcid_target].push_back(kobs);
 
         if (num_points_connected.count(tcid_host.frame_id) == 0) {
@@ -431,6 +432,7 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
             lm_pos.direction = StereographicParam<Scalar>::project(p0_triangulated);
             lm_pos.inv_dist = p0_triangulated[3];
             lmdb.addLandmark(lm_id, lm_pos);
+            persistent_lmdb.addLandmark(lm_id, lm_pos);
 
             num_points_added++;
             valid_kp = true;
@@ -440,6 +442,7 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
         if (valid_kp) {
           for (const auto& kv_obs : kp_obs) {
             lmdb.addObservation(kv_obs.first, kv_obs.second);
+            persistent_lmdb.addObservation(kv_obs.first, kv_obs.second);
           }
         }
       }
