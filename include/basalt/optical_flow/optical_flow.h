@@ -65,6 +65,7 @@ struct Keypoint {
   Eigen::AffineCompact2f pose;
   std::bitset<256> descriptor;
   bool tracked_by_opt_flow = false;
+  bool tracked_by_recall = false;
 };
 
 using KeypointId = size_t;

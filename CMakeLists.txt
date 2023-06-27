@@ -335,6 +335,7 @@ target_sources(basalt_internal
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/patch.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/patch_optical_flow.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/patterns.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optical_flow/keypoint_recall.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optimization/accumulator.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optimization/linearize.h
     ${CMAKE_CURRENT_SOURCE_DIR}/include/basalt/optimization/poses_linearize.h
@@ -373,6 +374,7 @@ target_sources(basalt_internal
     ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_base.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/linearization/linearization_rel_sc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/optical_flow/optical_flow.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/optical_flow/keypoint_recall.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/keypoints.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/system_utils.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/time_utils.cpp

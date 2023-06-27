@@ -59,6 +59,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <basalt/io/marg_data_io.h>
 #include <basalt/spline/se3_spline.h>
 #include <basalt/utils/assert.h>
+#include <basalt/optical_flow/keypoint_recall.h>
 #include <basalt/vi_estimator/vio_estimator.h>
 #include <basalt/calibration/calibration.hpp>
 
@@ -175,6 +176,7 @@ basalt::Calibration<double> calib;
 basalt::VioDatasetPtr vio_dataset;
 basalt::VioConfig vio_config;
 basalt::OpticalFlowBase::Ptr opt_flow_ptr;
+basalt::KeypointRecall::Ptr kpts_recall_ptr;
 basalt::VioEstimatorBase::Ptr vio;
 
 // Feed functions
@@ -312,12 +314,21 @@ int main(int argc, char** argv) {
     }
   }
 
+  // Initialize matching keypoints process
+  {
+    kpts_recall_ptr.reset(new KeypointRecall(vio_config));
+    kpts_recall_ptr->initialize();
+
+    // Match OpticalFlowResult with matching keypoints input queue
+    opt_flow_ptr->output_queue = &kpts_recall_ptr->input_matching_queue;
+  }
+
   const int64_t start_t_ns = vio_dataset->get_image_timestamps().front();
   {
     vio = basalt::VioEstimatorFactory::getVioEstimator(vio_config, calib, basalt::constants::g, use_imu, use_double);
     vio->initialize(Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
 
-    opt_flow_ptr->output_queue = &vio->vision_data_queue;
+    kpts_recall_ptr->output_matching_queue = &vio->vision_data_queue;
     opt_flow_ptr->show_gui = show_gui;
     if (show_gui) vio->out_vis_queue = &out_vis_queue;
     vio->out_state_queue = &out_state_queue;
@@ -587,6 +598,9 @@ int main(int argc, char** argv) {
 
   // wait first for vio to complete processing
   vio->maybe_join();
+
+  // if the vio is finished then the matching has to be finished too
+  kpts_recall_ptr->maybeJoin();
 
   // input threads will abort when vio is finished, but might be stuck in full
   // push to full queue, so drain queue now
