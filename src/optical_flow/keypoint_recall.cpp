@@ -53,9 +53,11 @@ void KeypointRecall::processFrame(OpticalFlowResult::Ptr& curr_frame) {
       }
     }
 
-    for (const auto& [kpt_id, kpt] : lmdb_.getLandmarks()) {
-      kp2.push_back(kpt_id);
-      descr2.push_back(kpt.descriptor);
+    Eigen::aligned_unordered_map<LandmarkId, Landmark<float>> landmarks;
+    getProjectedLandmarks(curr_frame, i, landmarks);
+    for (const auto& [lm_id, lm] : landmarks) {
+      kp2.push_back(lm_id);
+      descr2.push_back(lm.descriptor);
     }
 
     std::vector<std::pair<int, int>> matches;
@@ -75,9 +77,42 @@ void KeypointRecall::processFrame(OpticalFlowResult::Ptr& curr_frame) {
 
         curr_frame->keypoints.at(i)[new_kp_id] = curr_frame->keypoints.at(i).at(kp_id);
         curr_frame->keypoints.at(i)[new_kp_id].tracked_by_recall = true;
+        curr_frame->recall_matches.at(i)[new_kp_id] = curr_frame->keypoints.at(i).at(new_kp_id).pose;
         curr_frame->keypoints.at(i).erase(kp_id);
         num_matches_++;
       }
+    }
+  }
+}
+
+void KeypointRecall::getProjectedLandmarks(OpticalFlowResult::Ptr& curr_frame, size_t j, Eigen::aligned_unordered_map<LandmarkId, Landmark<float>>& landmarks) {
+  for (const auto& [lm_id, lm] : lmdb_.getLandmarks()) {
+
+    // Host camera
+    size_t i = lm.host_kf_id.cam_id;
+
+    // Unproject the direction vector
+    Vec4 ci_xyzw = StereographicParam<Scalar>::unproject(lm.direction);
+    ci_xyzw[3] = lm.inv_dist;
+
+    // Get the transformation from the world to the host camera
+    SE3 T_i_ci = calib_.T_i_c[i];
+    SE3 T_i0 = lmdb_.getFramePose(lm.host_kf_id.frame_id).template cast<Scalar>();
+    SE3 T_w_ci = T_i0 * T_i_ci;
+
+    Vec4 w_xyzw = T_w_ci * ci_xyzw;
+    Vec3 w_xyz = w_xyzw.template head<3>() / w_xyzw[3];
+
+    SE3 T_i1 = curr_frame->predicted_state->T_w_i.template cast<Scalar>();
+    SE3 T_i_cj = calib_.T_i_c[j];
+    SE3 T_cj = T_i1 * T_i_cj;
+    Vec3 cj_xyz = T_cj.inverse() * w_xyz;
+    Vec2 cj_uv;
+    // Project the point to the new frame
+    bool valid = calib_.intrinsics[j].project(cj_xyz, cj_uv);
+    if (valid) {
+      landmarks[lm_id] = lm;
+      curr_frame->projections[j].emplace_back(cj_uv);
     }
   }
 }

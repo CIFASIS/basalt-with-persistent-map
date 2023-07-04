@@ -54,6 +54,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <tbb/parallel_reduce.h>
 
 #include <chrono>
+#include <iostream>
 #include <slam_tracker.hpp>
 
 namespace basalt {
@@ -432,7 +433,13 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
             lm_pos.direction = StereographicParam<Scalar>::project(p0_triangulated);
             lm_pos.inv_dist = p0_triangulated[3];
             lmdb.addLandmark(lm_id, lm_pos);
-            persistent_lmdb.addLandmark(lm_id, lm_pos);
+            // persistent_lmdb.addLandmark(lm_id, lm_pos);
+
+            const SE3 pos = getPoseStateWithLin(tcidl.frame_id).getPose();
+            // persistent_lmdb.addFramePose(tcidl.frame_id, pos);
+
+            persistent_lmdb.addLandmarkWithPose(lm_id, lm_pos, tcidl.frame_id, pos);
+
 
             num_points_added++;
             valid_kp = true;
@@ -911,7 +918,7 @@ void SqrtKeypointVioEstimator<Scalar_>::marginalize(const std::map<int64_t, int>
       PoseStateWithLin<Scalar> pose(state);
 
       frame_poses[id] = pose;
-      persistent_lmdb.addFramePose(id, pose);
+      // persistent_lmdb.addFramePose(id, pose);
       frame_states.erase(id);
       imu_meas.erase(id);
     }
