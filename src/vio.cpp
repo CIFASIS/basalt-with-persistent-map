@@ -101,6 +101,7 @@ pangolin::Var<int> show_frame("ui.show_frame", 0, 0, 1500);
 pangolin::Var<bool> show_flow("ui.show_flow", false, false, true);
 pangolin::Var<bool> show_tracking_guess("ui.show_tracking_guess", false, false, true);
 pangolin::Var<bool> show_matching_guess("ui.show_matching_guess", false, false, true);
+pangolin::Var<bool> show_recall_projections("ui.show_recall_projections", true, false, true);
 pangolin::Var<bool> show_obs("ui.show_obs", true, false, true);
 pangolin::Var<bool> show_ids("ui.show_ids", false, false, true);
 pangolin::Var<bool> show_depth{"ui.show_depth", false, false, true};
@@ -316,7 +317,7 @@ int main(int argc, char** argv) {
 
   // Initialize matching keypoints process
   {
-    kpts_recall_ptr.reset(new KeypointRecall(vio_config));
+    kpts_recall_ptr.reset(new KeypointRecall(vio_config, calib));
     kpts_recall_ptr->initialize();
 
     // Match OpticalFlowResult with matching keypoints input queue
@@ -1095,6 +1096,21 @@ out_show_tracking_guess:
     }
     pangolin::glDrawLines(grid_lines);
   }
+
+  if (show_recall_projections) {
+    size_t frame_id = show_frame;
+    int64_t n_ts = vio_dataset->get_image_timestamps().at(frame_id);
+    auto it = vis_map.find(n_ts);
+    float radius = 3.0F;
+    glColor4f(0, 255, 0, 0.5);
+    for (auto& lm_pos : it->second->opt_flow_res->projections[cam_id]) {
+      bool in_bounds = lm_pos.x() >= 0 && lm_pos.x() < w && lm_pos.y() >= 0 && lm_pos.y() < h;
+      if (in_bounds) {
+        pangolin::glDrawCircle(lm_pos.cast<double>(), radius);
+      }
+    }
+  }
+
 }
 
 void draw_scene(pangolin::View& view) {
@@ -1139,6 +1155,10 @@ void draw_scene(pangolin::View& view) {
 
     glColor3ubv(pose_color);
     pangolin::glDrawPoints(it->second->points);
+    glColor3ubv(state_color);
+    for (size_t i = 0; i < calib.T_i_c.size(); i++) {
+      pangolin::glDrawPoints(it->second->opt_flow_res->projections[i]);
+    }
   }
 
   pangolin::glDrawAxis(Sophus::SE3d().matrix(), 1.0);

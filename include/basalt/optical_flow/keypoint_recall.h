@@ -16,8 +16,13 @@ class KeypointRecall {
   using Scalar = float;
 
   using Ptr = std::shared_ptr<KeypointRecall>;
+  using Vec2 = Eigen::Matrix<Scalar, 2, 1>;
+  using Vec3 = Eigen::Matrix<Scalar, 3, 1>;
+  using Vec4 = Eigen::Matrix<Scalar, 4, 1>;
+  using SE3 = Sophus::SE3<Scalar>;
 
-  KeypointRecall(const VioConfig& config) {
+  KeypointRecall(const VioConfig& config, const basalt::Calibration<double>& calib)
+      : calib_(calib.template cast<Scalar>()) {
     input_matching_queue.set_capacity(10);
     this->config_ = config;
 }
@@ -28,6 +33,8 @@ class KeypointRecall {
   void initialize();
 
   void processFrame(OpticalFlowResult::Ptr& frame);
+
+  void getProjectedLandmarks(OpticalFlowResult::Ptr& frame, size_t j, Eigen::aligned_unordered_map<LandmarkId, Landmark<float>>& landmarks);
 
   virtual ~KeypointRecall() { maybeJoin(); }
 
@@ -50,6 +57,7 @@ class KeypointRecall {
 
   std::shared_ptr<std::thread> processing_thread_;
   VioConfig config_;
+  const Calibration<Scalar> calib_;
   int num_matches_ = 0;
 
   // timing and stats

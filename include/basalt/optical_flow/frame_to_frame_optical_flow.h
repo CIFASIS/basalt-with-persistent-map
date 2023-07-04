@@ -192,6 +192,9 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
       transforms->keypoints.resize(num_cams);
       transforms->tracking_guesses.resize(num_cams);
       transforms->matching_guesses.resize(num_cams);
+      transforms->projections.resize(num_cams);
+      transforms->recall_matches.resize(num_cams);
+      transforms->predicted_state = predicted_state;
       transforms->t_ns = t_ns;
 
       pyramid.reset(new std::vector<ManagedImagePyr<uint16_t>>);
@@ -225,6 +228,9 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
       new_transforms->keypoints.resize(num_cams);
       new_transforms->tracking_guesses.resize(num_cams);
       new_transforms->matching_guesses.resize(num_cams);
+      new_transforms->projections.resize(num_cams);
+      new_transforms->recall_matches.resize(num_cams);
+      new_transforms->predicted_state = predicted_state;
       new_transforms->t_ns = t_ns;
 
       SE3 T_i1 = latest_state->T_w_i.template cast<Scalar>();
@@ -459,6 +465,8 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
         Vector2 c0_uv;
         Scalar _;
         bool projected = calib.projectBetweenCams(ci_uv, depth_guess, c0_uv, _, cam_id, 0);
+        // std::cout << " F2F old: (" << ci_uv.x() << ", " << ci_uv.y() << ") " <<  std::endl;
+        // std::cout << " F2F new: (" << c0_uv.x() << ", " << c0_uv.y() << ") " <<  std::endl;
         bool in_bounds = c0_uv.x() >= 0 && c0_uv.x() < w && c0_uv.y() >= 0 && c0_uv.y() < h;
         bool valid = projected && in_bounds;
         if (valid) {

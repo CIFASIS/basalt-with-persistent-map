@@ -99,13 +99,19 @@ struct OpticalFlowInput {
 
 struct OpticalFlowResult {
   using Ptr = std::shared_ptr<OpticalFlowResult>;
+  using Vec2 = Eigen::Matrix<float, 2, 1>;
+  using Vec3 = Eigen::Matrix<float, 3, 1>;
 
   int64_t t_ns;
   std::vector<Keypoints> keypoints;
   std::vector<Poses> tracking_guesses;
   std::vector<Poses> matching_guesses;
+  std::vector<std::vector<Vec2>> projections;
+  std::vector<Poses> recall_matches;
 
   std::vector<KeypointLevels> pyramid_levels;
+
+  PoseVelBiasState<double>::Ptr predicted_state;
 
   OpticalFlowInput::Ptr input_images;
 };
