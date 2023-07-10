@@ -547,6 +547,18 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
 
     data->opt_flow_res = prev_opt_flow_res[last_state_t_ns];
 
+    for (const auto& [lm_id, lm] : persistent_lmdb.getLandmarks()) {
+      Vec4 pt_cam = StereographicParam<Scalar>::unproject(lm.direction);
+      pt_cam[3] = lm.inv_dist;
+
+      SE3 T_w_i = persistent_lmdb.getFramePose(lm.host_kf_id.frame_id).template cast<Scalar>();
+      SE3 T_i_c = calib.T_i_c[lm.host_kf_id.cam_id];
+      SE3 T_w_c = T_w_i * T_i_c;
+      Vec4 pt_w = T_w_c * pt_cam;
+
+      data->landmarks.emplace_back((pt_w.template head<3>() / pt_w[3]).template cast<double>());
+    }
+
     out_vis_queue->push(data);
   }
 

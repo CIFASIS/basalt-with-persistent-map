@@ -102,6 +102,7 @@ pangolin::Var<bool> show_flow("ui.show_flow", false, false, true);
 pangolin::Var<bool> show_tracking_guess("ui.show_tracking_guess", false, false, true);
 pangolin::Var<bool> show_matching_guess("ui.show_matching_guess", false, false, true);
 pangolin::Var<bool> show_map_2D("ui.show_map_2D", false, false, true);
+pangolin::Var<bool> show_map_3D("ui.show_map_3D", false, false, true);
 pangolin::Var<bool> show_obs("ui.show_obs", true, false, true);
 pangolin::Var<bool> show_ids("ui.show_ids", false, false, true);
 pangolin::Var<bool> show_depth{"ui.show_depth", false, false, true};
@@ -1155,6 +1156,10 @@ void draw_scene(pangolin::View& view) {
 
     glColor3ubv(pose_color);
     pangolin::glDrawPoints(it->second->points);
+    if (show_map_3D) {
+      glColor3ubv(state_color);
+      pangolin::glDrawPoints(it->second->landmarks);
+    }
   }
 
   pangolin::glDrawAxis(Sophus::SE3d().matrix(), 1.0);
