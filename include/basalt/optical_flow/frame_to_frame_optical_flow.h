@@ -192,6 +192,9 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
       transforms->keypoints.resize(num_cams);
       transforms->tracking_guesses.resize(num_cams);
       transforms->matching_guesses.resize(num_cams);
+      transforms->projections.resize(num_cams);
+      transforms->recall_matches.resize(num_cams);
+      transforms->predicted_state = predicted_state;
       transforms->t_ns = t_ns;
 
       pyramid.reset(new std::vector<ManagedImagePyr<uint16_t>>);
@@ -225,6 +228,9 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
       new_transforms->keypoints.resize(num_cams);
       new_transforms->tracking_guesses.resize(num_cams);
       new_transforms->matching_guesses.resize(num_cams);
+      new_transforms->projections.resize(num_cams);
+      new_transforms->recall_matches.resize(num_cams);
+      new_transforms->predicted_state = predicted_state;
       new_transforms->t_ns = t_ns;
 
       SE3 T_i1 = latest_state->T_w_i.template cast<Scalar>();
@@ -255,7 +261,7 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
   }
 
   void trackPoints(const ManagedImagePyr<uint16_t>& pyr_1, const ManagedImagePyr<uint16_t>& pyr_2,  //
-                   const Keypoints& keypoint_map_1, Keypoints& keypoint_map_2, Keypoints& guesses,  //
+                   const Keypoints& keypoint_map_1, Keypoints& keypoint_map_2, Poses& guesses,      //
                    const Masks& masks1, const Masks& masks2, const SE3& T_c1_c2, size_t cam1, size_t cam2) const {
     size_t num_points = keypoint_map_1.size();
 
@@ -270,7 +276,8 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
       init_vec.push_back(affine);
     }
 
-    tbb::concurrent_unordered_map<KeypointId, Keypoint, std::hash<KeypointId>> result, guesses_tbb;
+    tbb::concurrent_unordered_map<KeypointId, Keypoint, std::hash<KeypointId>> result;
+    tbb::concurrent_unordered_map<KeypointId, Eigen::AffineCompact2f, std::hash<KeypointId>> guesses_tbb;
 
     bool tracking = cam1 == cam2;
     bool matching = cam1 != cam2;
@@ -283,7 +290,7 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
       for (size_t r = range.begin(); r != range.end(); ++r) {
         const KeypointId id = ids[r];
 
-        const Eigen::AffineCompact2f& transform_1 = init_vec[r];
+        const Eigen::AffineCompact2f& transform_1 = init_vec[r].pose;
         Eigen::AffineCompact2f transform_2 = transform_1;
 
         auto t1 = transform_1.translation();
@@ -327,7 +334,9 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
         Scalar dist2 = (t1 - t1_recovered).squaredNorm();
 
         if (dist2 < config.optical_flow_max_recovered_dist2) {
-          result[id] = transform_2;
+          result[id].pose = transform_2;
+          result[id].descriptor = init_vec[r].descriptor;
+          result[id].tracked_by_opt_flow = true;
         }
       }
     };
@@ -405,21 +414,25 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
   Keypoints addPointsForCamera(size_t cam_id) {
     Eigen::aligned_vector<Eigen::Vector2d> pts;  // Current points
     for (const auto& [kpid, affine] : transforms->keypoints.at(cam_id)) {
-      pts.emplace_back(affine.translation().template cast<double>());
+      pts.emplace_back(affine.pose.translation().template cast<double>());
     }
 
     KeypointsData kd;  // Detected new points
     detectKeypoints(pyramid->at(cam_id).lvl(0), kd, config.optical_flow_detection_grid_size,
                     config.optical_flow_detection_num_points_cell, config.optical_flow_detection_min_threshold,
                     config.optical_flow_detection_max_threshold, transforms->input_images->masks.at(cam_id), pts);
+    computeAngles(pyramid->at(cam_id).lvl(0), kd, true);
+    computeDescriptors(pyramid->at(cam_id).lvl(0), kd);
 
     Keypoints new_kpts;
-    for (auto& corner : kd.corners) {  // Set new points as keypoints
+    for (size_t i = 0; i < kd.corners.size(); i++) {  // Set new points as keypoints
       auto transform = Eigen::AffineCompact2f::Identity();
-      transform.translation() = corner.cast<Scalar>();
+      transform.translation() = kd.corners[i].cast<Scalar>();
 
-      transforms->keypoints.at(cam_id)[last_keypoint_id] = transform;
-      new_kpts[last_keypoint_id] = transform;
+      transforms->keypoints.at(cam_id)[last_keypoint_id].pose = transform;
+      transforms->keypoints.at(cam_id)[last_keypoint_id].descriptor = kd.corner_descriptors[i];
+      transforms->keypoints.at(cam_id)[last_keypoint_id].tracked_by_opt_flow = false;
+      new_kpts[last_keypoint_id] = transforms->keypoints.at(cam_id)[last_keypoint_id];
 
       last_keypoint_id++;
     }
@@ -452,6 +465,8 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
         Vector2 c0_uv;
         Scalar _;
         bool projected = calib.projectBetweenCams(ci_uv, depth_guess, c0_uv, _, cam_id, 0);
+        // std::cout << " F2F old: (" << ci_uv.x() << ", " << ci_uv.y() << ") " <<  std::endl;
+        // std::cout << " F2F new: (" << c0_uv.x() << ", " << c0_uv.y() << ") " <<  std::endl;
         bool in_bounds = c0_uv.x() >= 0 && c0_uv.x() < w && c0_uv.y() >= 0 && c0_uv.y() < h;
         bool valid = projected && in_bounds;
         if (valid) {
@@ -469,7 +484,7 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
 
     for (size_t i = 1; i < getNumCams(); i++) {
       Masks& ms = transforms->input_images->masks.at(i);
-      Keypoints& mgs = transforms->matching_guesses.at(i);
+      Poses& mgs = transforms->matching_guesses.at(i);
 
       // Match features on areas that overlap with cam0 using optical flow
       auto& pyr0 = pyramid->at(0);
@@ -496,8 +511,8 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
       auto it = transforms->keypoints.at(0).find(kpid);
 
       if (it != transforms->keypoints.at(0).end()) {
-        proj0.emplace_back(it->second.translation());
-        proj1.emplace_back(affine.translation());
+        proj0.emplace_back(it->second.pose.translation());
+        proj1.emplace_back(affine.pose.translation());
         kpids.emplace_back(kpid);
       }
     }

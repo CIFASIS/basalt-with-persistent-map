@@ -54,6 +54,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <tbb/parallel_reduce.h>
 
 #include <chrono>
+#include <iostream>
 #include <slam_tracker.hpp>
 
 namespace basalt {
@@ -336,9 +337,10 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
 
         KeypointObservation<Scalar> kobs;
         kobs.kpt_id = kpt_id;
-        kobs.pos = kv_obs.second.translation().cast<Scalar>();
+        kobs.pos = kv_obs.second.pose.translation().cast<Scalar>();
 
         lmdb.addObservation(tcid_target, kobs);
+        persistent_lmdb.addObservation(tcid_target, kobs);
         // obs[tcid_host][tcid_target].push_back(kobs);
 
         if (num_points_connected.count(tcid_host.frame_id) == 0) {
@@ -388,7 +390,7 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
 
               KeypointObservation<Scalar> kobs;
               kobs.kpt_id = lm_id;
-              kobs.pos = it->second.translation().template cast<Scalar>();
+              kobs.pos = it->second.pose.translation().template cast<Scalar>();
 
               // obs[tcidl][tcido].push_back(kobs);
               kp_obs[tcido] = kobs;
@@ -404,10 +406,11 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
           if (valid_kp) break;
           TimeCamId tcido = kv_obs.first;
 
-          const Vec2 p0 = opt_flow_meas->keypoints.at(i).at(lm_id).translation().cast<Scalar>();
+          const Vec2 p0 = opt_flow_meas->keypoints.at(i).at(lm_id).pose.translation().cast<Scalar>();
           const Vec2 p1 = prev_opt_flow_res[tcido.frame_id]
                               ->keypoints[tcido.cam_id]
                               .at(lm_id)
+                              .pose
                               .translation()
                               .template cast<Scalar>();
 
@@ -430,6 +433,13 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
             lm_pos.direction = StereographicParam<Scalar>::project(p0_triangulated);
             lm_pos.inv_dist = p0_triangulated[3];
             lmdb.addLandmark(lm_id, lm_pos);
+            // persistent_lmdb.addLandmark(lm_id, lm_pos);
+
+            const SE3 pos = getPoseStateWithLin(tcidl.frame_id).getPose();
+            // persistent_lmdb.addFramePose(tcidl.frame_id, pos);
+
+            persistent_lmdb.addLandmarkWithPose(lm_id, lm_pos, tcidl.frame_id, pos);
+
 
             num_points_added++;
             valid_kp = true;
@@ -439,6 +449,7 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
         if (valid_kp) {
           for (const auto& kv_obs : kp_obs) {
             lmdb.addObservation(kv_obs.first, kv_obs.second);
+            persistent_lmdb.addObservation(kv_obs.first, kv_obs.second);
           }
         }
       }
@@ -907,6 +918,7 @@ void SqrtKeypointVioEstimator<Scalar_>::marginalize(const std::map<int64_t, int>
       PoseStateWithLin<Scalar> pose(state);
 
       frame_poses[id] = pose;
+      // persistent_lmdb.addFramePose(id, pose);
       frame_states.erase(id);
       imu_meas.erase(id);
     }

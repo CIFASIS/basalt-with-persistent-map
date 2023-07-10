@@ -262,9 +262,10 @@ bool SqrtKeypointVoEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& opt
 
         KeypointObservation<Scalar> kobs;
         kobs.kpt_id = kpt_id;
-        kobs.pos = kv_obs.second.translation().cast<Scalar>();
+        kobs.pos = kv_obs.second.pose.translation().cast<Scalar>();
 
         lmdb.addObservation(tcid_target, kobs);
+        persistent_lmdb.addObservation(tcid_target, kobs);
         // obs[tcid_host][tcid_target].push_back(kobs);
 
         num_points_connected[tcid_host.frame_id]++;
@@ -319,7 +320,7 @@ bool SqrtKeypointVoEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& opt
 
               KeypointObservation<Scalar> kobs;
               kobs.kpt_id = lm_id;
-              kobs.pos = it->second.translation().template cast<Scalar>();
+              kobs.pos = it->second.pose.translation().template cast<Scalar>();
 
               // obs[tcidl][tcido].push_back(kobs);
               kp_obs[tcido] = kobs;
@@ -335,10 +336,11 @@ bool SqrtKeypointVoEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& opt
           if (valid_kp) break;
           TimeCamId tcido = kv_obs.first;
 
-          const Vec2 p0 = opt_flow_meas->keypoints.at(i).at(lm_id).translation().cast<Scalar>();
+          const Vec2 p0 = opt_flow_meas->keypoints.at(i).at(lm_id).pose.translation().cast<Scalar>();
           const Vec2 p1 = prev_opt_flow_res[tcido.frame_id]
                               ->keypoints[tcido.cam_id]
                               .at(lm_id)
+                              .pose
                               .translation()
                               .template cast<Scalar>();
 
@@ -361,6 +363,7 @@ bool SqrtKeypointVoEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& opt
             lm_pos.direction = StereographicParam<Scalar>::project(p0_triangulated);
             lm_pos.inv_dist = p0_triangulated[3];
             lmdb.addLandmark(lm_id, lm_pos);
+            persistent_lmdb.addLandmark(lm_id, lm_pos);
 
             num_points_added++;
             valid_kp = true;
@@ -370,6 +373,7 @@ bool SqrtKeypointVoEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& opt
         if (valid_kp) {
           for (const auto& kv_obs : kp_obs) {
             lmdb.addObservation(kv_obs.first, kv_obs.second);
+            persistent_lmdb.addObservation(kv_obs.first, kv_obs.second);
           }
 
           // TODO: non-linear refinement of landmark position from all

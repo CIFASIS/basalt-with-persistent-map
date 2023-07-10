@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <algorithm>
+#include <iostream>
 
 #include <basalt/vi_estimator/landmark_database.h>
 
@@ -41,10 +42,23 @@ namespace basalt {
 
 template <class Scalar_>
 void LandmarkDatabase<Scalar_>::addLandmark(LandmarkId lm_id, const Landmark<Scalar> &pos) {
+  if (name_ == "map") {
+    std::lock_guard<std::mutex> lock(mutex_);  // Lock the mutex
+  }
   auto &kpt = kpts[lm_id];
   kpt.direction = pos.direction;
   kpt.inv_dist = pos.inv_dist;
   kpt.host_kf_id = pos.host_kf_id;
+}
+
+template <class Scalar_>
+void LandmarkDatabase<Scalar_>::addLandmarkWithPose(LandmarkId lm_id, const Landmark<Scalar> &lm_pos, int64_t frame_id, const SE3& pos) {
+  std::lock_guard<std::mutex> lock(mutex_);  // Lock the mutex
+  auto &kpt = kpts[lm_id];
+  kpt.direction = lm_pos.direction;
+  kpt.inv_dist = lm_pos.inv_dist;
+  kpt.host_kf_id = lm_pos.host_kf_id;
+  frame_poses_[frame_id] = pos;
 }
 
 template <class Scalar_>
@@ -111,12 +125,30 @@ std::vector<const Landmark<Scalar_> *> LandmarkDatabase<Scalar_>::getLandmarksFo
 
 template <class Scalar_>
 void LandmarkDatabase<Scalar_>::addObservation(const TimeCamId &tcid_target, const KeypointObservation<Scalar> &o) {
+  if (name_ == "map") {
+    std::lock_guard<std::mutex> lock(mutex_);  // Lock the mutex
+  }
   auto it = kpts.find(o.kpt_id);
   BASALT_ASSERT(it != kpts.end());
 
   it->second.obs[tcid_target] = o.pos;
 
   observations[it->second.host_kf_id][tcid_target].insert(it->first);
+}
+
+template <class Scalar_>
+void LandmarkDatabase<Scalar_>::addFramePose(int64_t frame_id, const SE3& pos) {
+  if (name_ == "map") {
+    std::unique_lock<std::mutex> lock(mutex_);  // Lock the mutex
+  }
+
+  frame_poses_[frame_id] = pos;
+}
+template <class Scalar_>
+Sophus::SE3<Scalar_> &LandmarkDatabase<Scalar_>::getFramePose(int64_t frame_id) {
+  std::unique_lock<std::mutex> lock(mutex_);  // Lock the mutex
+
+  return frame_poses_.at(frame_id);
 }
 
 template <class Scalar_>
@@ -137,6 +169,9 @@ const std::unordered_map<TimeCamId, std::map<TimeCamId, std::set<LandmarkId>>>
 
 template <class Scalar_>
 const Eigen::aligned_unordered_map<LandmarkId, Landmark<Scalar_>> &LandmarkDatabase<Scalar_>::getLandmarks() const {
+  if (name_ == "map") {
+    std::lock_guard<std::mutex> lock(mutex_);  // Lock the mutex
+  }
   return kpts;
 }
 

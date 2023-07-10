@@ -203,7 +203,7 @@ int main(int argc, char** argv) {
           Eigen::AffineCompact2f t;
           t.setIdentity();
           t.translation() = obs.pos[k].cast<float>();
-          data->keypoints.back()[obs.id[k]] = t;
+          data->keypoints.back()[obs.id[k]].pose = t;
         }
       }
 

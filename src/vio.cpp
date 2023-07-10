@@ -59,6 +59,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <basalt/io/marg_data_io.h>
 #include <basalt/spline/se3_spline.h>
 #include <basalt/utils/assert.h>
+#include <basalt/optical_flow/keypoint_recall.h>
 #include <basalt/vi_estimator/vio_estimator.h>
 #include <basalt/calibration/calibration.hpp>
 
@@ -100,6 +101,7 @@ pangolin::Var<int> show_frame("ui.show_frame", 0, 0, 1500);
 pangolin::Var<bool> show_flow("ui.show_flow", false, false, true);
 pangolin::Var<bool> show_tracking_guess("ui.show_tracking_guess", false, false, true);
 pangolin::Var<bool> show_matching_guess("ui.show_matching_guess", false, false, true);
+pangolin::Var<bool> show_recall_projections("ui.show_recall_projections", true, false, true);
 pangolin::Var<bool> show_obs("ui.show_obs", true, false, true);
 pangolin::Var<bool> show_ids("ui.show_ids", false, false, true);
 pangolin::Var<bool> show_depth{"ui.show_depth", false, false, true};
@@ -175,6 +177,7 @@ basalt::Calibration<double> calib;
 basalt::VioDatasetPtr vio_dataset;
 basalt::VioConfig vio_config;
 basalt::OpticalFlowBase::Ptr opt_flow_ptr;
+basalt::KeypointRecall::Ptr kpts_recall_ptr;
 basalt::VioEstimatorBase::Ptr vio;
 
 // Feed functions
@@ -312,12 +315,21 @@ int main(int argc, char** argv) {
     }
   }
 
+  // Initialize matching keypoints process
+  {
+    kpts_recall_ptr.reset(new KeypointRecall(vio_config, calib));
+    kpts_recall_ptr->initialize();
+
+    // Match OpticalFlowResult with matching keypoints input queue
+    opt_flow_ptr->output_queue = &kpts_recall_ptr->input_matching_queue;
+  }
+
   const int64_t start_t_ns = vio_dataset->get_image_timestamps().front();
   {
     vio = basalt::VioEstimatorFactory::getVioEstimator(vio_config, calib, basalt::constants::g, use_imu, use_double);
     vio->initialize(Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero());
 
-    opt_flow_ptr->output_queue = &vio->vision_data_queue;
+    kpts_recall_ptr->output_matching_queue = &vio->vision_data_queue;
     opt_flow_ptr->show_gui = show_gui;
     if (show_gui) vio->out_vis_queue = &out_vis_queue;
     vio->out_state_queue = &out_state_queue;
@@ -588,6 +600,9 @@ int main(int argc, char** argv) {
   // wait first for vio to complete processing
   vio->maybe_join();
 
+  // if the vio is finished then the matching has to be finished too
+  kpts_recall_ptr->maybeJoin();
+
   // input threads will abort when vio is finished, but might be stuck in full
   // push to full queue, so drain queue now
   vio->drain_input_queues();
@@ -839,15 +854,15 @@ void draw_image_overlay(pangolin::View& v, size_t cam_id) {
     const Keypoints& kp_map = curr_vis_data->opt_flow_res->keypoints[cam_id];
 
     for (const auto& kv : kp_map) {
-      Eigen::MatrixXf transformed_patch = kv.second.linear() * opt_flow_ptr->patch_coord;
-      transformed_patch.colwise() += kv.second.translation();
+      Eigen::MatrixXf transformed_patch = kv.second.pose.linear() * opt_flow_ptr->patch_coord;
+      transformed_patch.colwise() += kv.second.pose.translation();
 
       for (int i = 0; i < transformed_patch.cols(); i++) {
         const Eigen::Vector2f c = transformed_patch.col(i);
         pangolin::glDrawCirclePerimeter(c[0], c[1], 0.5f);
       }
 
-      const Eigen::Vector2f c = kv.second.translation();
+      const Eigen::Vector2f c = kv.second.pose.translation();
 
       if (show_ids) pangolin::GlFont::I().Text("%d", kv.first).Draw(5 + c[0], 5 + c[1]);
     }
@@ -891,8 +906,8 @@ void draw_image_overlay(pangolin::View& v, size_t cam_id) {
       if (prev_kpts.count(kpid) == 0) continue;
       if (guess_obs.count(kpid) == 0) continue;
 
-      auto n = kpt.translation();
-      auto p = prev_kpts.at(kpid).translation();
+      auto n = kpt.pose.translation();
+      auto p = prev_kpts.at(kpid).pose.translation();
       auto g = guess_obs.at(kpid).translation();
 
       now_points.emplace_back(n);
@@ -944,8 +959,8 @@ out_show_tracking_guess:
       if (cam0_kpts.count(kpid) == 0) continue;
       if (guess_obs.count(kpid) == 0) continue;
 
-      auto n = kpt.translation();
-      auto c = cam0_kpts.at(kpid).translation();
+      auto n = kpt.pose.translation();
+      auto c = cam0_kpts.at(kpid).pose.translation();
       auto g = guess_obs.at(kpid).translation();
 
       now_points.emplace_back(n);
@@ -1081,6 +1096,21 @@ out_show_tracking_guess:
     }
     pangolin::glDrawLines(grid_lines);
   }
+
+  if (show_recall_projections) {
+    size_t frame_id = show_frame;
+    int64_t n_ts = vio_dataset->get_image_timestamps().at(frame_id);
+    auto it = vis_map.find(n_ts);
+    float radius = 3.0F;
+    glColor4f(0, 255, 0, 0.5);
+    for (auto& lm_pos : it->second->opt_flow_res->projections[cam_id]) {
+      bool in_bounds = lm_pos.x() >= 0 && lm_pos.x() < w && lm_pos.y() >= 0 && lm_pos.y() < h;
+      if (in_bounds) {
+        pangolin::glDrawCircle(lm_pos.cast<double>(), radius);
+      }
+    }
+  }
+
 }
 
 void draw_scene(pangolin::View& view) {
@@ -1125,6 +1155,10 @@ void draw_scene(pangolin::View& view) {
 
     glColor3ubv(pose_color);
     pangolin::glDrawPoints(it->second->points);
+    glColor3ubv(state_color);
+    for (size_t i = 0; i < calib.T_i_c.size(); i++) {
+      pangolin::glDrawPoints(it->second->opt_flow_res->projections[i]);
+    }
   }
 
   pangolin::glDrawAxis(Sophus::SE3d().matrix(), 1.0);
