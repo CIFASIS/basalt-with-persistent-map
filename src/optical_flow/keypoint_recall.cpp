@@ -54,7 +54,8 @@ void KeypointRecall::processFrame(OpticalFlowResult::Ptr& curr_frame) {
     }
 
     Eigen::aligned_unordered_map<LandmarkId, Landmark<float>> landmarks;
-    getProjectedLandmarks(curr_frame, i, landmarks);
+    Eigen::aligned_unordered_map<LandmarkId, Vec2> projections;
+    getProjectedLandmarks(curr_frame, i, landmarks, projections);
     for (const auto& [lm_id, lm] : landmarks) {
       kp2.push_back(lm_id);
       descr2.push_back(lm.descriptor);
@@ -77,15 +78,25 @@ void KeypointRecall::processFrame(OpticalFlowResult::Ptr& curr_frame) {
 
         curr_frame->keypoints.at(i)[new_kp_id] = curr_frame->keypoints.at(i).at(kp_id);
         curr_frame->keypoints.at(i)[new_kp_id].tracked_by_recall = true;
-        curr_frame->recall_matches.at(i)[new_kp_id] = curr_frame->keypoints.at(i).at(new_kp_id).pose;
+
+        // return landmark projected pose
+        curr_frame->projections[i].emplace_back(projections.at(new_kp_id));
+
+        // return match poses
+        std::tuple<Vec2, Vec2> match_pair;
+        Vec2 kpt_pose = curr_frame->keypoints.at(i).at(new_kp_id).pose.translation();
+
+        match_pair = std::make_tuple(kpt_pose, projections.at(new_kp_id));
+        curr_frame->recall_matches.at(i).emplace_back(match_pair);
         curr_frame->keypoints.at(i).erase(kp_id);
         num_matches_++;
+        std::cout << "New match at coords: " << curr_frame->keypoints.at(i).at(new_kp_id).pose.translation().transpose() << " camera " << i << " with keypoint id: " << new_kp_id << std::endl;
       }
     }
   }
 }
 
-void KeypointRecall::getProjectedLandmarks(OpticalFlowResult::Ptr& curr_frame, size_t j, Eigen::aligned_unordered_map<LandmarkId, Landmark<float>>& landmarks) {
+void KeypointRecall::getProjectedLandmarks(OpticalFlowResult::Ptr& curr_frame, size_t j, Eigen::aligned_unordered_map<LandmarkId, Landmark<float>>& landmarks,  Eigen::aligned_unordered_map<LandmarkId, Vec2>& projections) {
   for (const auto& [lm_id, lm] : lmdb_.getLandmarks()) {
 
     // Host camera
@@ -112,7 +123,7 @@ void KeypointRecall::getProjectedLandmarks(OpticalFlowResult::Ptr& curr_frame, s
     bool valid = calib_.intrinsics[j].project(cj_xyz, cj_uv);
     if (valid) {
       landmarks[lm_id] = lm;
-      curr_frame->projections[j].emplace_back(cj_uv);
+      projections[lm_id] = cj_uv;
     }
   }
 }

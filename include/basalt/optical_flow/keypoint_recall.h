@@ -34,7 +34,7 @@ class KeypointRecall {
 
   void processFrame(OpticalFlowResult::Ptr& frame);
 
-  void getProjectedLandmarks(OpticalFlowResult::Ptr& frame, size_t j, Eigen::aligned_unordered_map<LandmarkId, Landmark<float>>& landmarks);
+  void getProjectedLandmarks(OpticalFlowResult::Ptr& frame, size_t j, Eigen::aligned_unordered_map<LandmarkId, Landmark<float>>& landmarks, Eigen::aligned_unordered_map<LandmarkId, Vec2>& projections);
 
   virtual ~KeypointRecall() { maybeJoin(); }
 

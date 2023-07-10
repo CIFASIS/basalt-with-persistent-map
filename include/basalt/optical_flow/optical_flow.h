@@ -107,7 +107,7 @@ struct OpticalFlowResult {
   std::vector<Poses> tracking_guesses;
   std::vector<Poses> matching_guesses;
   std::vector<std::vector<Vec2>> projections;
-  std::vector<Poses> recall_matches;
+  std::vector<std::vector<std::tuple<Vec2, Vec2>>> recall_matches;
 
   std::vector<KeypointLevels> pyramid_levels;
 
