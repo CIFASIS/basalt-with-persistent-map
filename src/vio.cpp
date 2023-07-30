@@ -71,6 +71,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <basalt/utils/format.hpp>
 #include <basalt/utils/time_utils.hpp>
 
+#include <basalt/vi_estimator/nfr_mapper.h>
+
 // enable the "..."_format(...) string literal
 using namespace basalt::literals;
 using namespace basalt;
@@ -154,6 +156,7 @@ std::unordered_map<int64_t, basalt::VioVisualizationData::Ptr> vis_map;
 
 tbb::concurrent_bounded_queue<basalt::VioVisualizationData::Ptr> out_vis_queue;
 tbb::concurrent_bounded_queue<basalt::PoseVelBiasState<double>::Ptr> out_state_queue;
+tbb::concurrent_bounded_queue<MargData::Ptr> marg_queue;
 
 std::vector<int64_t> vio_t_ns;
 Eigen::aligned_vector<Eigen::Vector3d> vio_t_w_i;
@@ -233,8 +236,143 @@ void feed_imu() {
   opt_flow_ptr->input_imu_queue.push(nullptr);
 }
 
+void feed_mapper() {
+  std::cout << "Loading marg data into the mapper..." << std::endl;
+  basalt::NfrMapper::Ptr nrf_mapper;
+  nrf_mapper.reset(new basalt::NfrMapper(calib, vio_config));
+  while (true) {
+    basalt::MargData::Ptr data;
+    marg_queue.pop(data);
+    if (data.get() != nullptr) {
+      nrf_mapper->addMargData(data);
+    }
+    else { break; }
+  }
+}
+
+void showMap() {
+    std::cout << "Show map..." << std::endl;
+    pangolin::CreateWindowAndBind("Map", 1800, 1000);
+
+    glEnable(GL_DEPTH_TEST);
+
+    pangolin::View& img_view_display = pangolin::CreateDisplay()
+                                           .SetBounds(0.4, 1.0, pangolin::Attach::Pix(UI_WIDTH), 0.4)
+                                           .SetLayout(pangolin::LayoutEqual);
+
+    pangolin::CreatePanel("ui").SetBounds(0.0, 1.0, 0.0, pangolin::Attach::Pix(UI_WIDTH));
+
+    std::vector<std::shared_ptr<pangolin::ImageView>> img_view;
+    while (img_view.size() < calib.intrinsics.size()) {
+      std::shared_ptr<pangolin::ImageView> iv(new pangolin::ImageView);
+
+      size_t idx = img_view.size();
+      img_view.push_back(iv);
+
+      img_view_display.AddDisplay(*iv);
+      iv->extern_draw_function = std::bind(&draw_image_overlay, std::placeholders::_1, idx);
+    }
+
+    camera =
+        pangolin::OpenGlRenderState(pangolin::ProjectionMatrix(640, 480, 400, 400, 320, 240, 0.001, 10000),
+                                    pangolin::ModelViewLookAt(-3.4, -3.7, -8.3, 2.1, 0.6, 0.2, pangolin::AxisNegY));
+
+    //    pangolin::OpenGlRenderState camera(
+    //        pangolin::ProjectionMatrixOrthographic(-30, 30, -30, 30, -30, 30),
+    //        pangolin::ModelViewLookAt(-3.4, -3.7, -8.3, 2.1, 0.6, 0.2,
+    //                                  pangolin::AxisNegY));
+
+    pangolin::View& display3D = pangolin::CreateDisplay()
+                                    .SetAspect(-640 / 480.0)
+                                    .SetBounds(0.0, 1.0, 0.4, 1.0)
+                                    .SetHandler(new pangolin::Handler3D(camera));
+
+    // while (!pangolin::ShouldQuit()) {
+    //   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    //   if (lock_frames) {
+    //     // in case of locking frames, chaning one should change the other
+    //     if (show_frame1.GuiChanged()) {
+    //       show_frame2 = show_frame1;
+    //       show_frame2.Meta().gui_changed = true;
+    //       show_frame1.Meta().gui_changed = true;
+    //     } else if (show_frame2.GuiChanged()) {
+    //       show_frame1 = show_frame2;
+    //       show_frame1.Meta().gui_changed = true;
+    //       show_frame2.Meta().gui_changed = true;
+    //     }
+    //   }
+
+    //   display3D.Activate(camera);
+    //   glClearColor(1.f, 1.f, 1.f, 1.0f);
+
+    //   draw_scene();
+
+    //   if (show_frame1.GuiChanged() || show_cam1.GuiChanged()) {
+    //     size_t frame_id = static_cast<size_t>(show_frame1);
+    //     int64_t timestamp = image_t_ns[frame_id];
+    //     size_t cam_id = show_cam1;
+
+    //     if (nrf_mapper->img_data.count(timestamp) > 0 && nrf_mapper->img_data.at(timestamp).get()) {
+    //       const std::vector<basalt::ImageData>& img_vec = nrf_mapper->img_data.at(timestamp)->img_data;
+
+    //       pangolin::GlPixFormat fmt;
+    //       fmt.glformat = GL_LUMINANCE;
+    //       fmt.gltype = GL_UNSIGNED_SHORT;
+    //       fmt.scalable_internal_format = GL_LUMINANCE16;
+
+    //       if (img_vec[cam_id].img.get()) {
+    //         img_view[0]->SetImage(img_vec[cam_id].img->ptr, img_vec[cam_id].img->w, img_vec[cam_id].img->h,
+    //                               img_vec[cam_id].img->pitch, fmt);
+    //       } else {
+    //         img_view[0]->Clear();
+    //       }
+    //     } else {
+    //       img_view[0]->Clear();
+    //     }
+    //   }
+
+    //   if (euroc_fmt.GuiChanged()) {
+    //     tum_rgbd_fmt = !euroc_fmt;
+    //   }
+
+    //   if (tum_rgbd_fmt.GuiChanged()) {
+    //     euroc_fmt = !tum_rgbd_fmt;
+    //   }
+
+    //   if (show_frame2.GuiChanged() || show_cam2.GuiChanged()) {
+    //     size_t frame_id = static_cast<size_t>(show_frame2);
+    //     int64_t timestamp = image_t_ns[frame_id];
+    //     size_t cam_id = show_cam2;
+
+    //     if (nrf_mapper->img_data.count(timestamp) > 0 && nrf_mapper->img_data.at(timestamp).get()) {
+    //       const std::vector<basalt::ImageData>& img_vec = nrf_mapper->img_data.at(timestamp)->img_data;
+
+    //       pangolin::GlPixFormat fmt;
+    //       fmt.glformat = GL_LUMINANCE;
+    //       fmt.gltype = GL_UNSIGNED_SHORT;
+    //       fmt.scalable_internal_format = GL_LUMINANCE16;
+
+    //       if (img_vec[cam_id].img.get()) {
+    //         img_view[1]->SetImage(img_vec[cam_id].img->ptr, img_vec[cam_id].img->w, img_vec[cam_id].img->h,
+    //                               img_vec[cam_id].img->pitch, fmt);
+    //       } else {
+    //         img_view[1]->Clear();
+    //       }
+    //     } else {
+    //       img_view[1]->Clear();
+    //     }
+    //   }
+
+    //   pangolin::FinishFrame();
+
+    //   std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // }
+}
+
 int main(int argc, char** argv) {
   bool show_gui = true;
+  bool show_map = false;
   bool print_queue = false;
   std::string cam_calib_path;
   std::string dataset_path;
@@ -250,6 +388,7 @@ int main(int argc, char** argv) {
   CLI::App app{"App description"};
 
   app.add_option("--show-gui", show_gui, "Show GUI");
+  app.add_option("--show-map", show_map, "Show Map");
   app.add_option("--cam-calib", cam_calib_path, "Ground-truth camera calibration used for simulation.")->required();
 
   app.add_option("--dataset-path", dataset_path, "Path to dataset.")->required();
@@ -349,11 +488,22 @@ int main(int argc, char** argv) {
       os.close();
     }
   }
+  else {
+    vio->out_marg_queue = &marg_queue;
+  }
 
   vio_data_log.Clear();
 
   std::thread t1(&feed_images);
   std::thread t2(&feed_imu);
+  std::thread t6(&feed_mapper);
+  std::shared_ptr<std::thread> t7;
+  if (show_map) {
+    t7.reset(new std::thread([&]() {
+      showMap();
+    }));
+    // std::thread t7(&showMap);
+  }
 
   std::shared_ptr<std::thread> t3;
 
@@ -608,6 +758,8 @@ int main(int argc, char** argv) {
   if (t3) t3->join();
   t4.join();
   if (t5) t5->join();
+  t6.join();
+  if (t7) t7->join();
 
   // after joining all threads, print final queue sizes.
   if (print_queue) {
