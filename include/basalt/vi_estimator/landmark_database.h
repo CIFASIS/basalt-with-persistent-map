@@ -36,10 +36,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <basalt/utils/imu_types.h>
 #include <basalt/utils/eigen_utils.hpp>
+#include <mutex>
+#include <condition_variable>
+
 
 namespace basalt {
 
-using LandmarkId = KeypointId;
+using LandmarkId = size_t;
 template <class Scalar_>
 struct KeypointObservation {
   using Scalar = Scalar_;
@@ -59,6 +62,8 @@ struct Landmark {
   using ObsMap = Eigen::aligned_map<TimeCamId, Vec2>;
   using MapIter = typename ObsMap::iterator;
 
+  using Descriptor = std::bitset<256>;
+
   // 3D position parameters
   Vec2 direction;
   Scalar inv_dist;
@@ -66,6 +71,8 @@ struct Landmark {
   // Observations
   TimeCamId host_kf_id;
   ObsMap obs;
+
+  Descriptor descriptor;
 
   inline void backup() {
     backup_direction = direction;
@@ -88,9 +95,28 @@ template <class Scalar_>
 class LandmarkDatabase {
  public:
   using Scalar = Scalar_;
+  using SE3 = Sophus::SE3<Scalar>;
+
+  // TODO: unify
+  static LandmarkDatabase<Scalar>& getOriginalInstance() {
+      static LandmarkDatabase<Scalar> lmdb;
+      lmdb.name_ = "lmbd";
+      return lmdb;
+  }
+  static LandmarkDatabase<Scalar>& getMap() {
+      static LandmarkDatabase<Scalar> persistent_lmdb;
+      persistent_lmdb.name_ = "map";
+      return persistent_lmdb;
+  }
+
+  // The copy constructor and copy assignment operator are deleted to prevent copying of the class.
+  LandmarkDatabase(const LandmarkDatabase&) = delete;
+  LandmarkDatabase& operator=(const LandmarkDatabase&) = delete;
 
   // Non-const
   void addLandmark(LandmarkId lm_id, const Landmark<Scalar>& pos);
+
+  void addLandmarkWithPose(LandmarkId lm_id, const Landmark<Scalar>& lm_pos, int64_t frame_id, const SE3& pos);
 
   void removeFrame(const FrameId& frame);
 
@@ -99,7 +125,11 @@ class LandmarkDatabase {
 
   void addObservation(const TimeCamId& tcid_target, const KeypointObservation<Scalar>& o);
 
+  void addFramePose(FrameId frame_id, const SE3& pos);
+
   Landmark<Scalar>& getLandmark(LandmarkId lm_id);
+
+  SE3 &getFramePose(FrameId frame_id);
 
   // Const
   const Landmark<Scalar>& getLandmark(LandmarkId lm_id) const;
@@ -125,22 +155,34 @@ class LandmarkDatabase {
   void removeObservations(LandmarkId lm_id, const std::set<TimeCamId>& obs);
 
   inline void backup() {
-    for (auto& kv : kpts) kv.second.backup();
+    for (auto& lm : landmarks) lm.second.backup();
   }
 
   inline void restore() {
-    for (auto& kv : kpts) kv.second.restore();
+    for (auto& lm : landmarks) lm.second.restore();
   }
 
  private:
+  // The constructor is private to prevent external instantiation of the class.
+  LandmarkDatabase() {}
+
   using MapIter = typename Eigen::aligned_unordered_map<LandmarkId, Landmark<Scalar>>::iterator;
   MapIter removeLandmarkHelper(MapIter it);
   typename Landmark<Scalar>::MapIter removeLandmarkObservationHelper(MapIter it,
                                                                      typename Landmark<Scalar>::MapIter it2);
 
-  Eigen::aligned_unordered_map<LandmarkId, Landmark<Scalar>> kpts;
+  Eigen::aligned_unordered_map<LandmarkId, Landmark<Scalar>> landmarks;
 
   std::unordered_map<TimeCamId, std::map<TimeCamId, std::set<LandmarkId>>> observations;
+
+  Eigen::aligned_map<FrameId, SE3> frame_poses_;
+
+  // Name just to identify between original lmdb and map lmdb
+  // TODO: remove
+  std::string name_;
+
+  mutable std::mutex mutex_;
+  std::condition_variable cv_;
 
   static constexpr int min_num_obs = 2;
 };

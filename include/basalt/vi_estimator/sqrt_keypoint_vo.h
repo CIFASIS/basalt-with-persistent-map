@@ -189,6 +189,7 @@ class SqrtKeypointVoEstimator : public VioEstimatorBase, public SqrtBundleAdjust
   using BundleAdjustmentBase<Scalar>::frame_poses;
   using BundleAdjustmentBase<Scalar>::frame_states;
   using BundleAdjustmentBase<Scalar>::lmdb;
+  using BundleAdjustmentBase<Scalar>::persistent_lmdb;
   using BundleAdjustmentBase<Scalar>::obs_std_dev;
   using BundleAdjustmentBase<Scalar>::huber_thresh;
   using BundleAdjustmentBase<Scalar>::calib;

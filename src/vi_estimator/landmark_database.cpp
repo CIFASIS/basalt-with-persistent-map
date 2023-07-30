@@ -34,6 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #include <algorithm>
+#include <iostream>
 
 #include <basalt/vi_estimator/landmark_database.h>
 
@@ -41,15 +42,32 @@ namespace basalt {
 
 template <class Scalar_>
 void LandmarkDatabase<Scalar_>::addLandmark(LandmarkId lm_id, const Landmark<Scalar> &pos) {
-  auto &kpt = kpts[lm_id];
+  if (name_ == "map") {
+    std::lock_guard<std::mutex> lock(mutex_);  // Lock the mutex
+  }
+  auto &kpt = landmarks[lm_id];
   kpt.direction = pos.direction;
   kpt.inv_dist = pos.inv_dist;
   kpt.host_kf_id = pos.host_kf_id;
+  kpt.descriptor = pos.descriptor;
+}
+
+template <class Scalar_>
+void LandmarkDatabase<Scalar_>::addLandmarkWithPose(LandmarkId lm_id, const Landmark<Scalar> &lm_pos, int64_t frame_id, const SE3& pos) {
+  if (name_ == "map") {
+    std::lock_guard<std::mutex> lock(mutex_);
+  }
+  auto &kpt = landmarks[lm_id];
+  kpt.direction = lm_pos.direction;
+  kpt.inv_dist = lm_pos.inv_dist;
+  kpt.host_kf_id = lm_pos.host_kf_id;
+  kpt.descriptor = lm_pos.descriptor;
+  frame_poses_[frame_id] = pos;
 }
 
 template <class Scalar_>
 void LandmarkDatabase<Scalar_>::removeFrame(const FrameId &frame) {
-  for (auto it = kpts.begin(); it != kpts.end();) {
+  for (auto it = landmarks.begin(); it != landmarks.end();) {
     for (auto it2 = it->second.obs.begin(); it2 != it->second.obs.end();) {
       if (it2->first.frame_id == frame)
         it2 = removeLandmarkObservationHelper(it, it2);
@@ -69,7 +87,7 @@ template <class Scalar_>
 void LandmarkDatabase<Scalar_>::removeKeyframes(const std::set<FrameId> &kfs_to_marg,
                                                 const std::set<FrameId> &poses_to_marg,
                                                 const std::set<FrameId> &states_to_marg_all) {
-  for (auto it = kpts.begin(); it != kpts.end();) {
+  for (auto it = landmarks.begin(); it != landmarks.end();) {
     if (kfs_to_marg.count(it->second.host_kf_id.frame_id) > 0) {
       it = removeLandmarkHelper(it);
     } else {
@@ -104,15 +122,18 @@ std::vector<const Landmark<Scalar_> *> LandmarkDatabase<Scalar_>::getLandmarksFo
   std::vector<const Landmark<Scalar> *> res;
 
   for (const auto &[k, obs] : observations.at(tcid))
-    for (const auto &v : obs) res.emplace_back(&kpts.at(v));
+    for (const auto &v : obs) res.emplace_back(&landmarks.at(v));
 
   return res;
 }
 
 template <class Scalar_>
 void LandmarkDatabase<Scalar_>::addObservation(const TimeCamId &tcid_target, const KeypointObservation<Scalar> &o) {
-  auto it = kpts.find(o.kpt_id);
-  BASALT_ASSERT(it != kpts.end());
+  if (name_ == "map") {
+    std::lock_guard<std::mutex> lock(mutex_);
+  }
+  auto it = landmarks.find(o.kpt_id);
+  BASALT_ASSERT(it != landmarks.end());
 
   it->second.obs[tcid_target] = o.pos;
 
@@ -120,13 +141,28 @@ void LandmarkDatabase<Scalar_>::addObservation(const TimeCamId &tcid_target, con
 }
 
 template <class Scalar_>
+void LandmarkDatabase<Scalar_>::addFramePose(int64_t frame_id, const SE3& pos) {
+  if (name_ == "map") {
+    std::unique_lock<std::mutex> lock(mutex_);  // Lock the mutex
+  }
+
+  frame_poses_[frame_id] = pos;
+}
+template <class Scalar_>
+Sophus::SE3<Scalar_> &LandmarkDatabase<Scalar_>::getFramePose(int64_t frame_id) {
+  std::unique_lock<std::mutex> lock(mutex_);  // Lock the mutex
+
+  return frame_poses_.at(frame_id);
+}
+
+template <class Scalar_>
 Landmark<Scalar_> &LandmarkDatabase<Scalar_>::getLandmark(LandmarkId lm_id) {
-  return kpts.at(lm_id);
+  return landmarks.at(lm_id);
 }
 
 template <class Scalar_>
 const Landmark<Scalar_> &LandmarkDatabase<Scalar_>::getLandmark(LandmarkId lm_id) const {
-  return kpts.at(lm_id);
+  return landmarks.at(lm_id);
 }
 
 template <class Scalar_>
@@ -137,17 +173,20 @@ const std::unordered_map<TimeCamId, std::map<TimeCamId, std::set<LandmarkId>>>
 
 template <class Scalar_>
 const Eigen::aligned_unordered_map<LandmarkId, Landmark<Scalar_>> &LandmarkDatabase<Scalar_>::getLandmarks() const {
-  return kpts;
+  if (name_ == "map") {
+    std::lock_guard<std::mutex> lock(mutex_);  // Lock the mutex
+  }
+  return landmarks;
 }
 
 template <class Scalar_>
 bool LandmarkDatabase<Scalar_>::landmarkExists(int lm_id) const {
-  return kpts.count(lm_id) > 0;
+  return landmarks.count(lm_id) > 0;
 }
 
 template <class Scalar_>
 size_t LandmarkDatabase<Scalar_>::numLandmarks() const {
-  return kpts.size();
+  return landmarks.size();
 }
 
 template <class Scalar_>
@@ -165,7 +204,7 @@ int LandmarkDatabase<Scalar_>::numObservations() const {
 
 template <class Scalar_>
 int LandmarkDatabase<Scalar_>::numObservations(LandmarkId lm_id) const {
-  return kpts.at(lm_id).obs.size();
+  return landmarks.at(lm_id).obs.size();
 }
 
 template <class Scalar_>
@@ -182,7 +221,7 @@ typename LandmarkDatabase<Scalar_>::MapIter LandmarkDatabase<Scalar_>::removeLan
 
   if (host_it->second.empty()) observations.erase(host_it);
 
-  return kpts.erase(it);
+  return landmarks.erase(it);
 }
 
 template <class Scalar_>
@@ -200,14 +239,14 @@ typename Landmark<Scalar_>::MapIter LandmarkDatabase<Scalar_>::removeLandmarkObs
 
 template <class Scalar_>
 void LandmarkDatabase<Scalar_>::removeLandmark(LandmarkId lm_id) {
-  auto it = kpts.find(lm_id);
-  if (it != kpts.end()) removeLandmarkHelper(it);
+  auto it = landmarks.find(lm_id);
+  if (it != landmarks.end()) removeLandmarkHelper(it);
 }
 
 template <class Scalar_>
 void LandmarkDatabase<Scalar_>::removeObservations(LandmarkId lm_id, const std::set<TimeCamId> &obs) {
-  auto it = kpts.find(lm_id);
-  BASALT_ASSERT(it != kpts.end());
+  auto it = landmarks.find(lm_id);
+  BASALT_ASSERT(it != landmarks.end());
 
   for (auto it2 = it->second.obs.begin(); it2 != it->second.obs.end();) {
     if (obs.count(it2->first) > 0) {

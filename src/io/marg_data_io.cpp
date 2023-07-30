@@ -200,6 +200,13 @@ void load(Archive& ar, basalt::ManagedImage<T>& m) {
 }
 
 template <class Archive>
+void serialize(Archive& ar, basalt::Keypoint& m) {
+  ar(m.pose);
+  ar(m.descriptor);
+  ar(m.tracked_by_opt_flow);
+}
+
+template <class Archive>
 void serialize(Archive& ar, basalt::OpticalFlowResult& m) {
   ar(m.t_ns);
   ar(m.keypoints);
