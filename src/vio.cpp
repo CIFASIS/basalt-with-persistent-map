@@ -71,6 +71,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <basalt/utils/format.hpp>
 #include <basalt/utils/time_utils.hpp>
 
+#include <basalt/vi_estimator/nfr_mapper.h>
+
 // enable the "..."_format(...) string literal
 using namespace basalt::literals;
 using namespace basalt;
@@ -86,6 +88,13 @@ void draw_plots();
 void alignButton();
 void alignDeviceButton();
 void saveTrajectoryButton();
+// Map GUI functions
+void initializeMapper();
+void computeEdgeVis();
+void loadMapData();
+void showMap();
+void draw_mapper_image_overlay(pangolin::View& v, size_t view_id);
+void draw_map_scene();
 
 // Pangolin variables
 constexpr int UI_WIDTH = 200;
@@ -149,6 +158,7 @@ std::unordered_map<int64_t, basalt::VioVisualizationData::Ptr> vis_map;
 
 tbb::concurrent_bounded_queue<basalt::VioVisualizationData::Ptr> out_vis_queue;
 tbb::concurrent_bounded_queue<basalt::PoseVelBiasState<double>::Ptr> out_state_queue;
+tbb::concurrent_bounded_queue<MargData::Ptr> marg_queue;
 
 std::vector<int64_t> vio_t_ns;
 Eigen::aligned_vector<Eigen::Vector3d> vio_t_w_i;
@@ -176,6 +186,7 @@ basalt::VioDatasetPtr vio_dataset;
 basalt::VioConfig vio_config;
 basalt::OpticalFlowBase::Ptr opt_flow_ptr;
 basalt::VioEstimatorBase::Ptr vio;
+basalt::NfrMapper::Ptr nrf_mapper;
 
 // Feed functions
 void feed_images() {
@@ -230,6 +241,7 @@ void feed_imu() {
 
 int main(int argc, char** argv) {
   bool show_gui = true;
+  bool show_map = false;
   bool print_queue = false;
   std::string cam_calib_path;
   std::string dataset_path;
@@ -245,6 +257,7 @@ int main(int argc, char** argv) {
   CLI::App app{"App description"};
 
   app.add_option("--show-gui", show_gui, "Show GUI");
+  app.add_option("--show-map", show_map, "Show Map");
   app.add_option("--cam-calib", cam_calib_path, "Ground-truth camera calibration used for simulation.")->required();
 
   app.add_option("--dataset-path", dataset_path, "Path to dataset.")->required();
@@ -344,11 +357,20 @@ int main(int argc, char** argv) {
       os.close();
     }
   }
+  else if (show_map) {
+    vio->out_marg_queue = &marg_queue;
+  }
 
   vio_data_log.Clear();
 
   std::thread t1(&feed_images);
   std::thread t2(&feed_imu);
+  std::shared_ptr<std::thread> map_thread;
+  if (show_map) {
+    map_thread.reset(new std::thread([&]() {
+      initializeMapper();
+    }));
+  }
 
   std::shared_ptr<std::thread> t3;
 
@@ -603,6 +625,7 @@ int main(int argc, char** argv) {
   if (t3) t3->join();
   t4.join();
   if (t5) t5->join();
+  if (map_thread) map_thread->join();
 
   // after joining all threads, print final queue sizes.
   if (print_queue) {
@@ -1263,4 +1286,392 @@ void saveTrajectoryButton() {
 
     std::cout << "Saved trajectory in KITTI Dataset format in trajectory_kitti.txt" << std::endl;
   }
+}
+
+/// --------------------   MAPPER GUI   --------------------
+
+// Mapper GUI variables
+pangolin::Var<int> map_show_frame1("map_ui.show_frame1", 0, 0, 1);
+pangolin::Var<int> map_show_cam1("map_ui.show_cam1", 0, 0, 0);
+pangolin::Var<int> map_show_frame2("map_ui.show_frame2", 0, 0, 1);
+pangolin::Var<int> map_show_cam2("map_ui.show_cam2", 0, 0, 0);
+pangolin::Var<bool> map_lock_frames("map_ui.lock_frames", true, false, true);
+pangolin::Var<bool> map_show_detected("map_ui.show_detected", true, false, true);
+pangolin::Var<bool> map_show_matches("map_ui.show_matches", true, false, true);
+pangolin::Var<bool> map_show_inliers("map_ui.show_inliers", true, false, true);
+pangolin::Var<bool> map_show_ids("map_ui.show_ids", false, false, true);
+
+pangolin::Var<int> map_num_opt_iter("map_ui.num_opt_iter", 10, 0, 20);
+
+pangolin::Var<bool> map_show_gt("map_ui.show_gt", true, false, true);
+pangolin::Var<bool> map_show_edges("map_ui.show_edges", true, false, true);
+pangolin::Var<bool> map_show_points("map_ui.show_points", true, false, true);
+
+pangolin::OpenGlRenderState map_camera;
+
+/// Mapper variables
+Eigen::aligned_vector<Eigen::Vector3d> gt_frame_t_w_i;
+std::vector<int64_t> gt_frame_t_ns, image_t_ns;
+
+Eigen::aligned_vector<Eigen::Vector3d> mapper_points;
+std::vector<int> mapper_point_ids;
+
+std::map<int64_t, basalt::MargData::Ptr> marg_data;
+
+Eigen::aligned_vector<Eigen::Vector3d> edges_vis;
+Eigen::aligned_vector<Eigen::Vector3d> roll_pitch_vis;
+Eigen::aligned_vector<Eigen::Vector3d> rel_edges_vis;
+
+
+// Mapper functions
+
+void initializeMapper() {
+  nrf_mapper.reset(new basalt::NfrMapper(calib, vio_config));
+  while (true) {
+    basalt::MargData::Ptr data;
+    marg_queue.pop(data);
+    if (data.get() != nullptr) {
+      nrf_mapper->addMargData(data);
+      computeEdgeVis();
+      {
+        std::cout << "Loaded " << nrf_mapper->img_data.size() << " images." << std::endl;
+
+        map_show_frame1.Meta().range[1] = nrf_mapper->img_data.size() - 1;
+        map_show_frame2.Meta().range[1] = nrf_mapper->img_data.size() - 1;
+        map_show_frame1.Meta().gui_changed = true;
+        map_show_frame2.Meta().gui_changed = true;
+
+        map_show_cam1.Meta().range[1] = calib.intrinsics.size() - 1;
+        map_show_cam2.Meta().range[1] = calib.intrinsics.size() - 1;
+        if (calib.intrinsics.size() > 1) map_show_cam2 = 1;
+
+        for (const auto& kv : nrf_mapper->img_data) {
+          image_t_ns.emplace_back(kv.first);
+        }
+
+        std::sort(image_t_ns.begin(), image_t_ns.end());
+      }
+    }
+    else { break; }
+  }
+  showMap();
+}
+
+void loadMapData() {
+  std::cout << "Loading marg data into the mapper..." << std::endl;
+  while (true) {
+    basalt::MargData::Ptr data;
+    marg_queue.pop(data);
+    if (data.get() != nullptr) {
+      nrf_mapper->addMargData(data);
+    }
+    else { break; }
+  }
+}
+
+void computeEdgeVis() {
+  edges_vis.clear();
+  // std::cout << "Landmark: " << nrf_mapper->lmdb.numLandmarks() << std::endl;
+  for (const auto& kv1 : nrf_mapper->lmdb.getObservations()) {
+    for (const auto& kv2 : kv1.second) {
+      Eigen::Vector3d p1 = nrf_mapper->getFramePoses().at(kv1.first.frame_id).getPose().translation();
+      Eigen::Vector3d p2 = nrf_mapper->getFramePoses().at(kv2.first.frame_id).getPose().translation();
+
+      edges_vis.emplace_back(p1);
+      edges_vis.emplace_back(p2);
+    }
+  }
+
+  roll_pitch_vis.clear();
+  for (const auto& v : nrf_mapper->roll_pitch_factors) {
+    const Sophus::SE3d& T_w_i = nrf_mapper->getFramePoses().at(v.t_ns).getPose();
+
+    Eigen::Vector3d p = T_w_i.translation();
+    Eigen::Vector3d d = v.R_w_i_meas * T_w_i.so3().inverse() * (-Eigen::Vector3d::UnitZ());
+
+    roll_pitch_vis.emplace_back(p);
+    roll_pitch_vis.emplace_back(p + 0.1 * d);
+  }
+
+  rel_edges_vis.clear();
+  for (const auto& v : nrf_mapper->rel_pose_factors) {
+    Eigen::Vector3d p1 = nrf_mapper->getFramePoses().at(v.t_i_ns).getPose().translation();
+    Eigen::Vector3d p2 = nrf_mapper->getFramePoses().at(v.t_j_ns).getPose().translation();
+
+    rel_edges_vis.emplace_back(p1);
+    rel_edges_vis.emplace_back(p2);
+  }
+}
+
+void showMap() {
+    std::cout << "Show map..." << std::endl;
+    pangolin::CreateWindowAndBind("Map", 1800, 1000);
+
+    glEnable(GL_DEPTH_TEST);
+
+    pangolin::View& img_view_display = pangolin::CreateDisplay()
+                                           .SetBounds(0.4, 1.0, pangolin::Attach::Pix(UI_WIDTH), 0.4)
+                                           .SetLayout(pangolin::LayoutEqual);
+
+    pangolin::CreatePanel("map_ui").SetBounds(0.0, 1.0, 0.0, pangolin::Attach::Pix(UI_WIDTH));
+
+    std::vector<std::shared_ptr<pangolin::ImageView>> img_view;
+    while (img_view.size() < calib.intrinsics.size()) {
+      std::shared_ptr<pangolin::ImageView> iv(new pangolin::ImageView);
+
+      size_t idx = img_view.size();
+      img_view.push_back(iv);
+
+      img_view_display.AddDisplay(*iv);
+      iv->extern_draw_function = std::bind(&draw_mapper_image_overlay, std::placeholders::_1, idx);
+    }
+
+    map_camera =
+        pangolin::OpenGlRenderState(pangolin::ProjectionMatrix(640, 480, 400, 400, 320, 240, 0.001, 10000),
+                                    pangolin::ModelViewLookAt(-3.4, -3.7, -8.3, 2.1, 0.6, 0.2, pangolin::AxisNegY));
+
+    //    pangolin::OpenGlRenderState camera(
+    //        pangolin::ProjectionMatrixOrthographic(-30, 30, -30, 30, -30, 30),
+    //        pangolin::ModelViewLookAt(-3.4, -3.7, -8.3, 2.1, 0.6, 0.2,
+    //                                  pangolin::AxisNegY));
+
+    pangolin::View& display3D = pangolin::CreateDisplay()
+                                    .SetAspect(-640 / 480.0)
+                                    .SetBounds(0.0, 1.0, 0.4, 1.0)
+                                    .SetHandler(new pangolin::Handler3D(map_camera));
+
+    while (!pangolin::ShouldQuit()) {
+      glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+      if (map_lock_frames) {
+        // in case of locking frames, chaning one should change the other
+        if (map_show_frame1.GuiChanged()) {
+          map_show_frame2 = map_show_frame1;
+          map_show_frame2.Meta().gui_changed = true;
+          map_show_frame1.Meta().gui_changed = true;
+        } else if (map_show_frame2.GuiChanged()) {
+          map_show_frame1 = map_show_frame2;
+          map_show_frame1.Meta().gui_changed = true;
+          map_show_frame2.Meta().gui_changed = true;
+        }
+      }
+
+      display3D.Activate(map_camera);
+      glClearColor(1.f, 1.f, 1.f, 1.0f);
+
+      draw_map_scene();
+
+      if (map_show_frame1.GuiChanged() || map_show_cam1.GuiChanged()) {
+        size_t frame_id = static_cast<size_t>(map_show_frame1);
+        int64_t timestamp = image_t_ns[frame_id];
+        size_t cam_id = map_show_cam1;
+
+        if (nrf_mapper->img_data.count(timestamp) > 0 && nrf_mapper->img_data.at(timestamp).get()) {
+          const std::vector<basalt::ImageData>& img_vec = nrf_mapper->img_data.at(timestamp)->img_data;
+
+          pangolin::GlPixFormat fmt;
+          fmt.glformat = GL_LUMINANCE;
+          fmt.gltype = GL_UNSIGNED_SHORT;
+          fmt.scalable_internal_format = GL_LUMINANCE16;
+
+          if (img_vec[cam_id].img.get()) {
+            img_view[0]->SetImage(img_vec[cam_id].img->ptr, img_vec[cam_id].img->w, img_vec[cam_id].img->h,
+                                  img_vec[cam_id].img->pitch, fmt);
+          } else {
+            img_view[0]->Clear();
+          }
+        } else {
+          img_view[0]->Clear();
+        }
+      }
+
+      if (euroc_fmt.GuiChanged()) {
+        tum_rgbd_fmt = !euroc_fmt;
+      }
+
+      if (tum_rgbd_fmt.GuiChanged()) {
+        euroc_fmt = !tum_rgbd_fmt;
+      }
+
+      if (map_show_frame2.GuiChanged() || map_show_cam2.GuiChanged()) {
+        size_t frame_id = static_cast<size_t>(map_show_frame2);
+        int64_t timestamp = image_t_ns[frame_id];
+        size_t cam_id = map_show_cam2;
+
+        if (nrf_mapper->img_data.count(timestamp) > 0 && nrf_mapper->img_data.at(timestamp).get()) {
+          const std::vector<basalt::ImageData>& img_vec = nrf_mapper->img_data.at(timestamp)->img_data;
+
+          pangolin::GlPixFormat fmt;
+          fmt.glformat = GL_LUMINANCE;
+          fmt.gltype = GL_UNSIGNED_SHORT;
+          fmt.scalable_internal_format = GL_LUMINANCE16;
+
+          if (img_vec[cam_id].img.get()) {
+            img_view[1]->SetImage(img_vec[cam_id].img->ptr, img_vec[cam_id].img->w, img_vec[cam_id].img->h,
+                                  img_vec[cam_id].img->pitch, fmt);
+          } else {
+            img_view[1]->Clear();
+          }
+        } else {
+          img_view[1]->Clear();
+        }
+      }
+
+      pangolin::FinishFrame();
+
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
+
+void draw_mapper_image_overlay(pangolin::View& v, size_t view_id) {
+  UNUSED(v);
+
+  size_t frame_id = (view_id == 0) ? map_show_frame1 : map_show_frame2;
+  size_t cam_id = (view_id == 0) ? map_show_cam1 : map_show_cam2;
+
+  basalt::TimeCamId tcid(image_t_ns[frame_id], cam_id);
+
+  float text_row = 20;
+
+  if (map_show_detected) {
+    glLineWidth(1.0);
+    glColor3f(1.0, 0.0, 0.0);  // red
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    if (nrf_mapper->feature_corners.find(tcid) != nrf_mapper->feature_corners.end()) {
+      const basalt::KeypointsData& cr = nrf_mapper->feature_corners.at(tcid);
+
+      for (size_t i = 0; i < cr.corners.size(); i++) {
+        Eigen::Vector2d c = cr.corners[i];
+        double angle = cr.corner_angles[i];
+        pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
+
+        Eigen::Vector2d r(3, 0);
+        Eigen::Rotation2Dd rot(angle);
+        r = rot * r;
+
+        pangolin::glDrawLine(c, c + r);
+      }
+
+      pangolin::GlFont::I().Text("Detected %d corners", cr.corners.size()).Draw(5, 20);
+
+    } else {
+      glLineWidth(1.0);
+
+      pangolin::GlFont::I().Text("Corners not processed").Draw(5, text_row);
+    }
+    text_row += 20;
+  }
+
+  if (map_show_matches || map_show_inliers) {
+    glLineWidth(1.0);
+    glColor3f(0.0, 0.0, 1.0);  // blue
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    size_t o_frame_id = (view_id == 0 ? map_show_frame2 : map_show_frame1);
+    size_t o_cam_id = (view_id == 0 ? map_show_cam2 : map_show_cam1);
+
+    basalt::TimeCamId o_tcid(image_t_ns[o_frame_id], o_cam_id);
+
+    int idx = -1;
+
+    auto it = nrf_mapper->feature_matches.find(std::make_pair(tcid, o_tcid));
+
+    if (it != nrf_mapper->feature_matches.end()) {
+      idx = 0;
+    } else {
+      it = nrf_mapper->feature_matches.find(std::make_pair(o_tcid, tcid));
+      if (it != nrf_mapper->feature_matches.end()) {
+        idx = 1;
+      }
+    }
+
+    if (idx >= 0 && map_show_matches) {
+      if (nrf_mapper->feature_corners.find(tcid) != nrf_mapper->feature_corners.end()) {
+        const basalt::KeypointsData& cr = nrf_mapper->feature_corners.at(tcid);
+
+        for (size_t i = 0; i < it->second.matches.size(); i++) {
+          size_t c_idx = idx == 0 ? it->second.matches[i].first : it->second.matches[i].second;
+
+          Eigen::Vector2d c = cr.corners[c_idx];
+          double angle = cr.corner_angles[c_idx];
+          pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
+
+          Eigen::Vector2d r(3, 0);
+          Eigen::Rotation2Dd rot(angle);
+          r = rot * r;
+
+          pangolin::glDrawLine(c, c + r);
+
+          if (map_show_ids) {
+            pangolin::GlFont::I().Text("%d", i).Draw(c[0], c[1]);
+          }
+        }
+
+        pangolin::GlFont::I().Text("Detected %d matches", it->second.matches.size()).Draw(5, text_row);
+        text_row += 20;
+      }
+    }
+
+    glColor3f(0.0, 1.0, 0.0);  // green
+
+    if (idx >= 0 && map_show_inliers) {
+      if (nrf_mapper->feature_corners.find(tcid) != nrf_mapper->feature_corners.end()) {
+        const basalt::KeypointsData& cr = nrf_mapper->feature_corners.at(tcid);
+
+        for (size_t i = 0; i < it->second.inliers.size(); i++) {
+          size_t c_idx = idx == 0 ? it->second.inliers[i].first : it->second.inliers[i].second;
+
+          Eigen::Vector2d c = cr.corners[c_idx];
+          double angle = cr.corner_angles[c_idx];
+          pangolin::glDrawCirclePerimeter(c[0], c[1], 3.0);
+
+          Eigen::Vector2d r(3, 0);
+          Eigen::Rotation2Dd rot(angle);
+          r = rot * r;
+
+          pangolin::glDrawLine(c, c + r);
+
+          if (show_ids) {
+            pangolin::GlFont::I().Text("%d", i).Draw(c[0], c[1]);
+          }
+        }
+
+        pangolin::GlFont::I().Text("Detected %d inliers", it->second.inliers.size()).Draw(5, text_row);
+        text_row += 20;
+      }
+    }
+  }
+}
+
+void draw_map_scene() {
+  glPointSize(3);
+  glColor3f(1.0, 0.0, 0.0);
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+  glColor3ubv(pose_color);
+  if (map_show_points) pangolin::glDrawPoints(mapper_points);
+
+  glColor3ubv(gt_color);
+  if (show_gt) pangolin::glDrawLineStrip(gt_frame_t_w_i);
+
+  glColor3f(0.0, 1.0, 0.0);
+  if (map_show_edges) pangolin::glDrawLines(edges_vis);
+
+  glLineWidth(2);
+  glColor3f(1.0, 0.0, 1.0);
+  if (map_show_edges) pangolin::glDrawLines(roll_pitch_vis);
+  glLineWidth(1);
+
+  glColor3f(1.0, 0.0, 0.0);
+  if (map_show_edges) pangolin::glDrawLines(rel_edges_vis);
+
+  for (const auto& kv : nrf_mapper->getFramePoses()) {
+    pangolin::glDrawAxis(kv.second.getPose().matrix(), 0.1);
+  }
+
+  pangolin::glDrawAxis(Sophus::SE3d().matrix(), 1.0);
 }
