@@ -188,6 +188,8 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Patter
       transforms->pyramid_levels.resize(num_cams);
       transforms->tracking_guesses.resize(num_cams);
       transforms->matching_guesses.resize(num_cams);
+      transforms->projections.resize(num_cams);
+      transforms->recall_matches.resize(num_cams);
       transforms->t_ns = t_ns;
 
       pyramid.reset(new std::vector<ManagedImagePyr<uint16_t>>);
@@ -222,6 +224,8 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Patter
       new_transforms->tracking_guesses.resize(num_cams);
       new_transforms->matching_guesses.resize(num_cams);
       new_transforms->pyramid_levels.resize(num_cams);
+      new_transforms->projections.resize(num_cams);
+      new_transforms->recall_matches.resize(num_cams);
       new_transforms->t_ns = t_ns;
 
       SE3 T_i1 = latest_state->T_w_i.template cast<Scalar>();
@@ -255,7 +259,7 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Patter
   void trackPoints(const ManagedImagePyr<uint16_t>& pyr_1, const ManagedImagePyr<uint16_t>& pyr_2,  //
                    const Keypoints& keypoint_map_1, const KeypointLevels& pyramid_levels_1,         //
                    Keypoints& keypoint_map_2, KeypointLevels& pyramid_levels_2,                     //
-                   Keypoints& guesses, const Masks& masks1, const Masks& masks2, const SE3& T_c1_c2, size_t cam1,
+                   Poses& guesses, const Masks& masks1, const Masks& masks2, const SE3& T_c1_c2, size_t cam1,
                    size_t cam2) const {
     size_t num_points = keypoint_map_1.size();
 
@@ -273,7 +277,8 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Patter
       pyramid_level.push_back(pyramid_levels_1.at(kpid));
     }
 
-    tbb::concurrent_unordered_map<KeypointId, Keypoint, std::hash<KeypointId>> result, guesses_tbb;
+    tbb::concurrent_unordered_map<KeypointId, Keypoint, std::hash<KeypointId>> result;
+    tbb::concurrent_unordered_map<KeypointId, Eigen::AffineCompact2f, std::hash<KeypointId>> guesses_tbb;
     tbb::concurrent_unordered_map<KeypointId, size_t, std::hash<KeypointId>> pyrlvls_tbb;
 
     bool tracking = cam1 == cam2;
@@ -287,7 +292,7 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Patter
       for (size_t r = range.begin(); r != range.end(); ++r) {
         const KeypointId id = ids[r];
 
-        const Eigen::AffineCompact2f& transform_1 = init_vec[r];
+        const Eigen::AffineCompact2f& transform_1 = init_vec[r].pose;
         Eigen::AffineCompact2f transform_2 = transform_1;
 
         auto t1 = transform_1.translation();
@@ -331,7 +336,9 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Patter
         Scalar dist2 = (t1 - t1_recovered).squaredNorm();
 
         if (dist2 < config.optical_flow_max_recovered_dist2) {
-          result[id] = transform_2;
+          result[id].pose = transform_2;
+          result[id].descriptor = init_vec[r].descriptor;
+          result[id].tracked_by_opt_flow = true;
           pyrlvls_tbb[id] = pyramid_level[r];
         }
       }
@@ -426,7 +433,7 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Patter
       const ssize_t point_level = transforms->pyramid_levels.at(cam_id).at(kpid);
       if (point_level >= level - 1 && point_level <= level + 1) {  // Use the point on adjacent levels too
         const Scalar pt_scale = 1 << point_level;
-        pts.emplace_back((affine.translation() / pt_scale).template cast<double>());
+        pts.emplace_back((affine.pose.translation() / pt_scale).template cast<double>());
       }
     }
 
@@ -436,19 +443,23 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Patter
     detectKeypoints(pyramid->at(cam_id).lvl(level), kd, config.optical_flow_detection_grid_size,
                     config.optical_flow_detection_num_points_cell, config.optical_flow_detection_min_threshold,
                     config.optical_flow_detection_max_threshold, transforms->input_images->masks.at(cam_id), pts);
+    computeAngles(pyramid->at(cam_id).lvl(level), kd, true);
+    computeDescriptors(pyramid->at(cam_id).lvl(level), kd);
 
     //! @note Using static grid size for all levels. Scaling it made feature
     //! count increase 2x but ATE/RTE scores were just slightly worse/better.
 
     Keypoints new_kpts;
     KeypointLevels new_pyramid_levels;
-    for (auto& corner : kd.corners) {  // Set new points as keypoints
+    for (size_t i = 0; i < kd.corners.size(); i++) {  // Set new points as keypoints
       auto transform = Eigen::AffineCompact2f::Identity();
-      transform.translation() = corner.cast<Scalar>() * scale;
+      transform.translation() = kd.corners[i].cast<Scalar>() * scale;
 
-      transforms->keypoints.at(cam_id)[last_keypoint_id] = transform;
+      transforms->keypoints.at(cam_id)[last_keypoint_id].pose = transform;
+      transforms->keypoints.at(cam_id)[last_keypoint_id].descriptor = kd.corner_descriptors[i];
+      transforms->keypoints.at(cam_id)[last_keypoint_id].tracked_by_opt_flow = false;
       transforms->pyramid_levels.at(cam_id)[last_keypoint_id] = level;
-      new_kpts[last_keypoint_id] = transform;
+      new_kpts[last_keypoint_id] = transforms->keypoints.at(cam_id)[last_keypoint_id];
       new_pyramid_levels[last_keypoint_id] = level;
 
       last_keypoint_id++;
@@ -502,7 +513,7 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Patter
 
       for (size_t i = 1; i < getNumCams(); i++) {
         Masks& ms = transforms->input_images->masks.at(i);
-        Keypoints& mgs = transforms->matching_guesses.at(i);
+        Poses& mgs = transforms->matching_guesses.at(i);
 
         // Match features on areas that overlap with cam0 using optical flow
         auto& pyr0 = pyramid->at(0);
@@ -535,8 +546,8 @@ class MultiscaleFrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Patter
       auto it = transforms->keypoints.at(0).find(kpid);
 
       if (it != transforms->keypoints.at(0).end()) {
-        proj0.emplace_back(it->second.translation());
-        proj1.emplace_back(affine.translation());
+        proj0.emplace_back(it->second.pose.translation());
+        proj1.emplace_back(affine.pose.translation());
         kpids.emplace_back(kpid);
       }
     }

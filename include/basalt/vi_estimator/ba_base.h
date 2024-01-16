@@ -145,7 +145,7 @@ class BundleAdjustmentBase {
   Eigen::aligned_map<int64_t, PoseStateWithLin<Scalar>> frame_poses;
 
   // Point management
-  LandmarkDatabase<Scalar> lmdb;
+  LandmarkDatabase<Scalar>& lmdb = LandmarkDatabase<Scalar>::getInstance();
 
   Scalar obs_std_dev;
   Scalar huber_thresh;

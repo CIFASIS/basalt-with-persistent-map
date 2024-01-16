@@ -100,6 +100,11 @@ pangolin::Var<int> show_frame("ui.show_frame", 0, 0, 1500);
 pangolin::Var<bool> show_flow("ui.show_flow", false, false, true);
 pangolin::Var<bool> show_tracking_guess("ui.show_tracking_guess", false, false, true);
 pangolin::Var<bool> show_matching_guess("ui.show_matching_guess", false, false, true);
+pangolin::Var<bool> show_recall_matches("ui.show_recall_matches", false, false, true);
+pangolin::Var<bool> show_proj("ui.show_proj", false, false, true);
+pangolin::Var<bool> show_proj_ids("ui.show_proj_ids", false, false, true);
+pangolin::Var<bool> show_new_detections("ui.show_new_detections", false, false, true);
+pangolin::Var<bool> show_map_3D("ui.show_map_3D", false, false, true);
 pangolin::Var<bool> show_obs("ui.show_obs", true, false, true);
 pangolin::Var<bool> show_ids("ui.show_ids", false, false, true);
 pangolin::Var<bool> show_depth{"ui.show_depth", false, false, true};
@@ -128,7 +133,7 @@ Button next_step_btn("ui.next_step", &next_step);
 Button prev_step_btn("ui.prev_step", &prev_step);
 
 pangolin::Var<bool> continue_btn("ui.continue", false, false, true);
-pangolin::Var<bool> continue_fast("ui.continue_fast", true, false, true);
+pangolin::Var<bool> continue_fast("ui.continue_fast", false, false, true);
 
 Button align_se3_btn("ui.align_se3", &alignButton);
 
@@ -839,15 +844,15 @@ void draw_image_overlay(pangolin::View& v, size_t cam_id) {
     const Keypoints& kp_map = curr_vis_data->opt_flow_res->keypoints[cam_id];
 
     for (const auto& kv : kp_map) {
-      Eigen::MatrixXf transformed_patch = kv.second.linear() * opt_flow_ptr->patch_coord;
-      transformed_patch.colwise() += kv.second.translation();
+      Eigen::MatrixXf transformed_patch = kv.second.pose.linear() * opt_flow_ptr->patch_coord;
+      transformed_patch.colwise() += kv.second.pose.translation();
 
       for (int i = 0; i < transformed_patch.cols(); i++) {
         const Eigen::Vector2f c = transformed_patch.col(i);
         pangolin::glDrawCirclePerimeter(c[0], c[1], 0.5f);
       }
 
-      const Eigen::Vector2f c = kv.second.translation();
+      const Eigen::Vector2f c = kv.second.pose.translation();
 
       if (show_ids) pangolin::GlFont::I().Text("%d", kv.first).Draw(5 + c[0], 5 + c[1]);
     }
@@ -891,8 +896,8 @@ void draw_image_overlay(pangolin::View& v, size_t cam_id) {
       if (prev_kpts.count(kpid) == 0) continue;
       if (guess_obs.count(kpid) == 0) continue;
 
-      auto n = kpt.translation();
-      auto p = prev_kpts.at(kpid).translation();
+      auto n = kpt.pose.translation();
+      auto p = prev_kpts.at(kpid).pose.translation();
       auto g = guess_obs.at(kpid).translation();
 
       now_points.emplace_back(n);
@@ -944,8 +949,8 @@ out_show_tracking_guess:
       if (cam0_kpts.count(kpid) == 0) continue;
       if (guess_obs.count(kpid) == 0) continue;
 
-      auto n = kpt.translation();
-      auto c = cam0_kpts.at(kpid).translation();
+      auto n = kpt.pose.translation();
+      auto c = cam0_kpts.at(kpid).pose.translation();
       auto g = guess_obs.at(kpid).translation();
 
       now_points.emplace_back(n);
@@ -1081,6 +1086,50 @@ out_show_tracking_guess:
     }
     pangolin::glDrawLines(grid_lines);
   }
+
+  if (show_recall_matches) {
+    auto matches = curr_vis_data->opt_flow_res->recall_matches[cam_id];
+
+    float radius = 3.0F;
+
+    // Draw tracked features in previous frame
+    for (auto& [kpt_id, kpt_pos, proj_pos] : matches) {
+      auto kpt_pos_d = kpt_pos.cast<double>();
+      auto proj_pos_d = proj_pos.cast<double>();
+      // Draw match
+      glColor4f(255, 0, 0, 0.5);
+      pangolin::glDrawCircle(kpt_pos_d, radius);
+      pangolin::glDrawCirclePerimeter(kpt_pos_d, 5.0F);
+      pangolin::GlFont::I().Text("%d", kpt_id).Draw(kpt_pos_d.x()+5, kpt_pos_d.y()+5);
+      // Draw projection matched
+      glColor4f(255, 0, 255, 0.5);
+      pangolin::glDrawCircle(proj_pos_d, radius);
+      // Draw line between both
+      glColor4f(255, 255, 255, 0.5);
+      pangolin::glDrawLine(kpt_pos_d, proj_pos_d);
+    }
+    glColor4f(255, 0, 0, 0.5);
+
+  }
+  if (show_proj) {
+    auto projections = curr_vis_data->opt_flow_res->projections[cam_id];
+    for (auto& [id, proj] : projections) {
+      auto proj_d = proj.cast<double>();
+      glColor4f(255, 0, 255, 0.5);
+      pangolin::glDrawCirclePerimeter(proj_d, 3.0F);
+      if (show_proj_ids) {
+        pangolin::GlFont::I().Text("%d", id).Draw(proj.x()+5, proj.y()+5);
+      }
+    }
+  }
+  if (show_new_detections) {
+    auto points = curr_vis_data->opt_flow_res->new_detections[cam_id];
+    for (auto& uv : points) {
+      auto uv_d = uv.cast<double>();
+      glColor4f(255, 128, 128, 0.5);
+      pangolin::glDrawCircle(uv_d, 3.0F);
+    }
+  }
 }
 
 void draw_scene(pangolin::View& view) {
@@ -1125,6 +1174,10 @@ void draw_scene(pangolin::View& view) {
 
     glColor3ubv(pose_color);
     pangolin::glDrawPoints(it->second->points);
+    if (show_map_3D) {
+      glColor3ubv(state_color);
+      pangolin::glDrawPoints(it->second->landmarks);
+    }
   }
 
   pangolin::glDrawAxis(Sophus::SE3d().matrix(), 1.0);
@@ -1156,7 +1209,7 @@ bool next_step() {
 }
 
 bool prev_step() {
-  if (show_frame > 1) {
+  if (show_frame >= 1) {
     show_frame = show_frame - 1;
     show_frame.Meta().gui_changed = true;
     return true;

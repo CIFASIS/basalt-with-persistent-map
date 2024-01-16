@@ -262,7 +262,7 @@ bool SqrtKeypointVoEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& opt
 
         KeypointObservation<Scalar> kobs;
         kobs.kpt_id = kpt_id;
-        kobs.pos = kv_obs.second.translation().cast<Scalar>();
+        kobs.pos = kv_obs.second.pose.translation().cast<Scalar>();
 
         lmdb.addObservation(tcid_target, kobs);
         // obs[tcid_host][tcid_target].push_back(kobs);
@@ -319,7 +319,7 @@ bool SqrtKeypointVoEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& opt
 
               KeypointObservation<Scalar> kobs;
               kobs.kpt_id = lm_id;
-              kobs.pos = it->second.translation().template cast<Scalar>();
+              kobs.pos = it->second.pose.translation().template cast<Scalar>();
 
               // obs[tcidl][tcido].push_back(kobs);
               kp_obs[tcido] = kobs;
@@ -335,10 +335,11 @@ bool SqrtKeypointVoEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& opt
           if (valid_kp) break;
           TimeCamId tcido = kv_obs.first;
 
-          const Vec2 p0 = opt_flow_meas->keypoints.at(i).at(lm_id).translation().cast<Scalar>();
+          const Vec2 p0 = opt_flow_meas->keypoints.at(i).at(lm_id).pose.translation().cast<Scalar>();
           const Vec2 p1 = prev_opt_flow_res[tcido.frame_id]
                               ->keypoints[tcido.cam_id]
                               .at(lm_id)
+                              .pose
                               .translation()
                               .template cast<Scalar>();
 
@@ -360,7 +361,10 @@ bool SqrtKeypointVoEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& opt
             lm_pos.host_kf_id = tcidl;
             lm_pos.direction = StereographicParam<Scalar>::project(p0_triangulated);
             lm_pos.inv_dist = p0_triangulated[3];
-            lmdb.addLandmark(lm_id, lm_pos);
+            lm_pos.descriptor = opt_flow_meas->keypoints.at(i).at(lm_id).descriptor;
+
+            const SE3 pos = getPoseStateWithLin(tcidl.frame_id).getPose();
+            lmdb.addLandmarkWithPose(lm_id, lm_pos, tcidl.frame_id, pos);
 
             num_points_added++;
             valid_kp = true;
@@ -468,6 +472,18 @@ bool SqrtKeypointVoEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& opt
     data->projections = projections;
 
     data->opt_flow_res = prev_opt_flow_res[last_state_t_ns];
+
+    for (const auto& [lm_id, lm] : lmdb.getLandmarks()) {
+      Vec4 pt_cam = StereographicParam<Scalar>::unproject(lm.direction);
+      pt_cam[3] = lm.inv_dist;
+
+      SE3 T_w_i = lmdb.getFramePose(lm.host_kf_id.frame_id).template cast<Scalar>();
+      SE3 T_i_c = calib.T_i_c[lm.host_kf_id.cam_id];
+      SE3 T_w_c = T_w_i * T_i_c;
+      Vec4 pt_w = T_w_c * pt_cam;
+
+      data->landmarks.emplace_back((pt_w.template head<3>() / pt_w[3]).template cast<double>());
+    }
 
     out_vis_queue->push(data);
   }

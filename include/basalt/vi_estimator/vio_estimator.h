@@ -56,6 +56,8 @@ struct VioVisualizationData {
 
   std::shared_ptr<std::vector<Eigen::aligned_vector<Eigen::Vector4d>>> projections;
 
+  Eigen::aligned_vector<Eigen::Vector3d> landmarks;
+
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
