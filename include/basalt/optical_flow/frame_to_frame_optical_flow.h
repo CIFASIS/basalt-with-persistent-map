@@ -128,6 +128,7 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
 
       if (img == nullptr) {
         if (output_queue) output_queue->push(nullptr);
+        if (config.optical_flow_recall_enable) std::cout << "Total recalls: " << recalls_count << std::endl;
         break;
       }
       img->addTime("frames_received");
@@ -561,6 +562,7 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
 
       addKeypoint(cam_id, lm_id, curr_pose);
       recalls[cam_id][lm_id] = curr_pose;
+      recalls_count++;
     }
   }
 
@@ -745,6 +747,7 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
   Eigen::aligned_unordered_map<KeypointId, Eigen::aligned_vector<PatchT>> patches;
   Eigen::aligned_vector<Eigen::MatrixXi> cells;  // Number of features in each gridcell
   std::vector<Keypoints> recalls;
+  int recalls_count = 0;
   const Vector3d accel_cov;
   const Vector3d gyro_cov;
   const size_t c, w, h, x_start, x_stop, y_start, y_stop;  // Grid properties
