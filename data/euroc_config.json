@@ -55,7 +55,7 @@
         "config.vio_marg_lost_landmarks": true,
         "config.vio_kf_marg_feature_ratio": 0.1,
         "config.vio_kf_marg_criteria": "KF_MARG_DEFAULT",
-        "config.vio_always_get_covisibility_map": false,
+        "config.vio_covisibility_query_frequency": 0,
         "config.map_covisibility_criteria": "MAP_COV_STS",
         "config.map_sts_max_size": 7,
         "config.map_sts_use_last_frame": false,

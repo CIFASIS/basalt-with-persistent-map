@@ -523,7 +523,7 @@ void SqrtKeypointVioEstimator<Scalar_>::initialize(const Eigen::Vector3d& bg_, c
       }
       curr_frame->input_images->addTime("imu_preintegrated");
 
-      bool send_covisibility_request = out_covi_req_queue && (config.vio_always_get_covisibility_map || get_map);
+      bool send_covisibility_request = out_covi_req_queue && ((config.vio_covisibility_query_frequency != 0 && frame_count % config.vio_covisibility_query_frequency == 0) || get_map);
       if (send_covisibility_request) {
         if (covisible_submap != nullptr) removeCovisibilityMap();
         std::vector<KeypointId> keypoint_ids;

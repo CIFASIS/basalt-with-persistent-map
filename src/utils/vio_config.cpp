@@ -106,7 +106,7 @@ VioConfig::VioConfig() {
 
   vio_kf_marg_feature_ratio = 0.1;
   vio_kf_marg_criteria = KeyframeMargCriteria::KF_MARG_DEFAULT;
-  vio_always_get_covisibility_map = false;
+  vio_covisibility_query_frequency = 7;
   map_covisibility_criteria = MapCovisibilityCriteria::MAP_COV_DEFAULT;
   map_sts_max_size = 7;
   map_sts_use_last_frame = true;
@@ -295,7 +295,7 @@ void serialize(Archive& ar, basalt::VioConfig& config) {
   ar(CEREAL_NVP(config.vio_marg_lost_landmarks));
   ar(CEREAL_NVP(config.vio_kf_marg_feature_ratio));
   ar(CEREAL_NVP(config.vio_kf_marg_criteria));
-  ar(CEREAL_NVP(config.vio_always_get_covisibility_map));
+  ar(CEREAL_NVP(config.vio_covisibility_query_frequency));
   ar(CEREAL_NVP(config.map_covisibility_criteria));
   ar(CEREAL_NVP(config.map_sts_max_size));
   ar(CEREAL_NVP(config.map_sts_use_last_frame));
