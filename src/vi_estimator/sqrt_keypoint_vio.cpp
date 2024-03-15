@@ -530,6 +530,7 @@ void SqrtKeypointVioEstimator<Scalar_>::initialize(const Eigen::Vector3d& bg_, c
         for (size_t i = 0; i < curr_frame->keypoints.size(); i++) {
           for (const auto& kv : curr_frame->keypoints[i]) keypoint_ids.emplace_back(kv.first);
         }
+        // TODO: doing the request here leaves a frame without any covisibility map
         out_covi_req_queue->push(std::make_shared<std::vector<KeypointId>>(keypoint_ids));
         get_map = false;
       }
@@ -826,7 +827,11 @@ bool SqrtKeypointVioEstimator<Scalar_>::measure(const OpticalFlowResult::Ptr& op
   if (lm_bundle_needed) {
     LandmarkBundle::Ptr lmb = std::make_shared<LandmarkBundle>();
     lmb->ts = last_state_t_ns;
-    for (const auto& [lmid, lm] : lmdb.getLandmarks()) {
+    // TODO@brunozanotti: improve landmark ordering: this is to prioritize older landmarks during recall
+    std::map<LandmarkId, Landmark<Scalar_>> ordered_lms{};
+    auto& unordered_lms = lmdb.getLandmarks();
+    ordered_lms.insert(unordered_lms.begin(), unordered_lms.end());
+    for (const auto& [lmid, lm] : ordered_lms) {
       if (frame_poses.count(lm.host_kf_id.frame_id) == 0) continue;
       SE3 T_w_i = frame_poses.at(lm.host_kf_id.frame_id).getPose();
       SE3 T_i_c = calib.T_i_c[lm.host_kf_id.cam_id];
