@@ -615,6 +615,14 @@ struct basalt_vio_ui : vis::VIOUIBase {
     std::cout << "Total runtime: {:.3f}s\n"_format(duration_total);
 
     {
+      auto opt_flow_stats = opt_flow->getStats();
+      basalt::ExecutionStats stats;
+      for (const auto& [k, v] : opt_flow_stats) stats.add(k, v);
+
+      stats.save_json("stats_opt_flow.json");
+    }
+
+    {
       basalt::ExecutionStats stats;
       stats.add("exec_time_s", duration_total);
       stats.add("ate_rmse", ate_rmse);

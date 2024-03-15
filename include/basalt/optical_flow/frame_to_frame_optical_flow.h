@@ -88,6 +88,7 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
   using OpticalFlowBase::input_lm_bundle_queue;
   using OpticalFlowBase::input_state_queue;
   using OpticalFlowBase::last_keypoint_id;
+  using OpticalFlowBase::recalls_count;
   using OpticalFlowBase::latest_lm_bundle;
   using OpticalFlowBase::latest_state;
   using OpticalFlowBase::old_pyramid;
@@ -747,7 +748,6 @@ class FrameToFrameOpticalFlow : public OpticalFlowTyped<Scalar, Pattern> {
   Eigen::aligned_unordered_map<KeypointId, Eigen::aligned_vector<PatchT>> patches;
   Eigen::aligned_vector<Eigen::MatrixXi> cells;  // Number of features in each gridcell
   std::vector<Keypoints> recalls;
-  int recalls_count = 0;
   const Vector3d accel_cov;
   const Vector3d gyro_cov;
   const size_t c, w, h, x_start, x_stop, y_start, y_stop;  // Grid properties

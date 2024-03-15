@@ -150,6 +150,13 @@ class OpticalFlowBase {
     }
   }
 
+  inline const std::map<std::string, double> getStats() {
+    std::map<std::string, double> stats{};
+    stats["kpts"] = last_keypoint_id;
+    stats["recalls"] = recalls_count;
+    return stats;
+  }
+
   tbb::concurrent_bounded_queue<OpticalFlowInput::Ptr> input_img_queue;
   tbb::concurrent_bounded_queue<ImuData<double>::Ptr> input_imu_queue;
   tbb::concurrent_queue<double> input_depth_queue;
@@ -169,6 +176,7 @@ class OpticalFlowBase {
   int64_t t_ns = -1;
   size_t frame_counter = 0;
   KeypointId last_keypoint_id = 0;
+  size_t recalls_count = 0;
 
   VioConfig config;
 
