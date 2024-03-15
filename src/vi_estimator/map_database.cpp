@@ -189,4 +189,12 @@ void MapDatabase::computeSTSMap(const std::vector<size_t>& curr_kpts) {
   map.getSubmap(candidate_kfs, sts_map);
 }
 
+const std::map<std::string, double> MapDatabase::getStats(){
+  std::map<std::string, double> stats{};
+  stats["num_kfs"] = map.numKeyframes();
+  stats["num_lms"] = map.numLandmarks();
+  stats["num_obs"] = map.numObservations();
+  return stats;
+}
+
 }  // namespace basalt

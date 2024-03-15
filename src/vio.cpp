@@ -631,6 +631,14 @@ struct basalt_vio_ui : vis::VIOUIBase {
       stats.save_json("stats_vio.json");
     }
 
+    {
+      auto map_db_stats = map_db->getStats();
+      basalt::ExecutionStats stats;
+      for (const auto& [k, v] : map_db_stats) stats.add(k, v);
+
+      stats.save_json("stats_map.json");
+    }
+
     if (!aborted && !trajectory_fmt.empty()) {
       std::cout << "Saving trajectory..." << std::endl;
 

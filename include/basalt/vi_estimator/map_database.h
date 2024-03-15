@@ -92,6 +92,8 @@ class MapDatabase {
 
   void computeSTSMap(const std::vector<size_t>& curr_kpts);
 
+  const std::map<std::string, double> getStats();
+
   inline void maybe_join() {
     if (reading_thread) {
       reading_thread->join();
