@@ -74,6 +74,14 @@ struct LandmarkBundle {
   Eigen::aligned_vector<Eigen::Vector4f> lms = {};
 };
 
+struct OpticalFlowStats {
+  using Ptr = std::shared_ptr<OpticalFlowStats>;
+
+  int64_t t_ns;
+  int features = 0;
+  int recalls = 0;
+};
+
 struct OpticalFlowInput {
   using Ptr = std::shared_ptr<OpticalFlowInput>;
   using Vec3 = Eigen::Matrix<double, 3, 1>;
@@ -163,6 +171,7 @@ class OpticalFlowBase {
   tbb::concurrent_queue<PoseVelBiasState<double>::Ptr> input_state_queue;
   tbb::concurrent_queue<LandmarkBundle::Ptr> input_lm_bundle_queue;
   tbb::concurrent_bounded_queue<OpticalFlowResult::Ptr>* output_queue = nullptr;
+  tbb::concurrent_bounded_queue<OpticalFlowStats::Ptr>* opt_flow_stats_queue = nullptr;
 
   Eigen::MatrixXf patch_coord;
   double depth_guess = -1;
@@ -177,6 +186,8 @@ class OpticalFlowBase {
   size_t frame_counter = 0;
   KeypointId last_keypoint_id = 0;
   size_t recalls_count = 0;
+  size_t curr_features = 0;
+  size_t curr_recalls = 0;
 
   VioConfig config;
 
